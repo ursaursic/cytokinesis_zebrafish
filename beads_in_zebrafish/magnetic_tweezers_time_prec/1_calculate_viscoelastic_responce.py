@@ -1,0 +1,70 @@
+import pandas as pd
+import os
+from tqdm import tqdm
+
+from utils import *
+import importlib
+
+# import 0_add_info_to_df as a module
+module_name = "0_add_info_to_df"
+add_info_to_df = importlib.import_module(module_name)
+
+
+################################################################################
+subtract_background = True
+# save_mode = 'ipynb' # the code will display the plots in browser 
+save_mode = 'png' # the plots will be saved as png on fileserver
+filepath_results_corrected = f'{add_info_to_df.dir_analysis}/results_viscoelasticity_corrected.csv' # result filepath for data with background flow correction (use this!)
+filepath_results = f'{add_info_to_df.dir_analysis}/results_viscoelasticity.csv' # result filepath for data without background correction
+################################################################################
+
+
+def main():
+    # Results data frame
+    df_results = pd.DataFrame(columns=['FILENAME', 'TRACK_IDX', 'PULSE_NUMBER', 'MT_STATUS', 'VISCOEL_PARAMS_RISING', 'VISCOEL_PARAMS_RELAXING', 'COMMENTS'], index=[0])
+
+    for filename in tqdm(os.listdir(add_info_to_df.dir_measurements_extended)):
+        filepath = add_info_to_df.dir_measurements_extended+'/'+filename
+        filename = filename.split('.')[0]  # This is the name of the file without extention
+        # Open the HDF5 file and read metadata
+        df = pd.read_hdf(filepath, key='df')
+        with pd.HDFStore(filepath, mode='r') as store:
+            comments = store.get_storer('df').attrs.metadata
+        
+        df = add_calculated_displacement(df, subtract_background=subtract_background) # calculate displacement for every pulse (option: substract background flows)
+
+        intermediate_plots=True
+        if intermediate_plots:
+            if not os.path.exists(f'{add_info_to_df.dir_plots}/trajectories'):
+                os.mkdir(f'{add_info_to_df.dir_plots}/trajectories')
+            if not os.path.exists(f'{add_info_to_df.dir_plots}/displacement'):
+                os.mkdir(f'{add_info_to_df.dir_plots}/displacement')
+            
+            if save_mode == 'ipynb':
+                plot_trajectories(filename, df, comments, save_to_filepath='ipynb', show_background_fit=True)
+                plot_displacement(filename, df, comments, save_to_filepath='ipynb')
+            elif save_mode == 'png':
+                plot_trajectories(filename, df, comments, save_to_filepath=f'{add_info_to_df.dir_plots}/trajectories/{filename}.png', show_background_fit=True)
+                plot_displacement(filename, df, comments, save_to_filepath=f'{add_info_to_df.dir_plots}/displacement/{filename}.png')
+            else:
+                print('Intermendiate plots not saved.')
+
+        if save_mode == 'ipynb':
+            df_results = calculate_fit_parameters(filename, df, comments, df_results, save_plot_to_filepath='ipynb')
+        elif save_mode == 'png':
+            df_results = calculate_fit_parameters(filename, df, comments, df_results, save_plot_to_filepath=f'{add_info_to_df.dir_plots}')
+        else:
+            print('Displacement-force curves not saved.')
+
+
+    if subtract_background:
+        # subtracted background flows (this data is more accurate)
+        df_results.to_csv(filepath_results_corrected)
+    else:
+        # original data without background flow subtraction
+        df_results.to_csv(filepath_results)
+
+
+if __name__ == "__main__":
+    main()
+    print("All done! :)")
