@@ -20,6 +20,7 @@ import yaml
 
 from utils import *
 
+
 def main(config_path):
     # load config file
     with open(config_path, 'r') as file:
