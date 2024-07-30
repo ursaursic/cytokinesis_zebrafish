@@ -54,15 +54,22 @@ def main(config_path):
 
 
         df = pd.read_csv(filepath, skiprows=[1, 2, 3], encoding = "utf-8")
+        # check if we have before file or end potint of the tip
 
-        # Find tip, save tip img to file and calculate distance form tip
-        filepath_tip = df_general_info['before_file'].values[idx]
-        threshold_tip = df_general_info['tip_threshold'].values[idx]
-        dir_tip_imgs = f'{dir_plots}/tip_images'
-        if not os.path.exists(dir_tip_imgs):
-            os.mkdir(dir_tip_imgs)
-        filepath_tip_outline = f'{dir_tip_imgs}/{filename}.png'
-        tip = find_tip(filepath_tip, threshold_tip, save_img_to_path=filepath_tip_outline, endpoint=True)
+        if 'before_file' in df_general_info.columns:
+            # Find tip, save tip img to file and calculate distance form tip
+            filepath_tip = df_general_info['before_file'].values[idx]
+            threshold_tip = df_general_info['tip_threshold'].values[idx]
+            dir_tip_imgs = f'{dir_plots}/tip_images'
+            if not os.path.exists(dir_tip_imgs):
+                os.mkdir(dir_tip_imgs)
+            filepath_tip_outline = f'{dir_tip_imgs}/{filename}.png'
+
+            tip = find_tip(filepath_tip, threshold_tip, save_img_to_path=filepath_tip_outline, endpoint=True)
+
+        elif 'tip_x' in df_general_info.columns:
+            tip = list(df_general_info[['tip_x', 'tip_y']].values[idx])
+
         if tip:
             calculate_distance_from_tip(df, tip) 
         else:
@@ -70,8 +77,8 @@ def main(config_path):
 
         # Add additional information about magnet status 
         magnet_info = df_general_info[['first_pulse (frame)', 't_on (frame)', 't_off (frame)']].values[idx]
-        if any(magnet_info == 'unclear'):
-            continue
+        # if any(magnet_info == 'unclear'):
+        #     continue
         magnet_info = list(map(int, magnet_info))
         add_magnet_status(df, magnet_info)
 
