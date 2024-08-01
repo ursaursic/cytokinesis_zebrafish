@@ -24,7 +24,7 @@ def main(config_path):
     ################################################################################
 
     # Results data frame
-    df_results = pd.DataFrame(columns=['FILENAME', 'TRACK_IDX', 'PULSE_NUMBER', 'MT_STATUS', 'VISCOEL_PARAMS_RISING', 'VISCOEL_PARAMS_RELAXING', 'COMMENTS'], index=[0])
+    df_results = pd.DataFrame(columns=['FILENAME', 'TRACK_IDX', 'PULSE_NUMBER', 'MT_STATUS', 'COMMENTS'], index=[0])
 
     for filename in tqdm(os.listdir(dir_measurements_extended)):
         filepath = dir_measurements_extended+'/'+filename

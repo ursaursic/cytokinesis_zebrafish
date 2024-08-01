@@ -139,13 +139,13 @@ def add_flow_slope(df: pd.DataFrame) -> pd.DataFrame:
     for idx in df['TRACK_ID'].unique():
         track = df[df["TRACK_ID"] == idx]
         for pulse in track['PULSE_NUMBER'].unique():
-            if len(track[track['PULSE_NUMBER']==pulse]) <= 10:
+            if len(track[track['PULSE_NUMBER']==pulse]) <= 15:
                 continue
             magnet_off_length = len(track.loc[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==0), 'FRAME'])
             xdata = track.loc[track['PULSE_NUMBER']==pulse, 'FRAME'].values[-int(2/3*magnet_off_length):]
             ydata = track.loc[track['PULSE_NUMBER']==pulse, 'DISTANCE [um]'].values[-int(2/3*magnet_off_length):]
             f = lambda x, *p: p[0]*x + p[1]
-            popt, pcov = curve_fit(f, xdata, ydata, p0=[-1, 300], nan_policy='raise')
+            popt, pcov = curve_fit(f, xdata, ydata, p0=[-0.1, 100], nan_policy='raise')
             if (np.sqrt(pcov[1][1])/popt[1] < 1) & (np.sqrt(pcov[0][0])/popt[0] < 1) & (MSE(xdata, ydata, f, popt) < 0.5):
                 df.loc[(df["TRACK_ID"]==idx) & (track['PULSE_NUMBER']==pulse), ['CORRECTION_k', 'CORRECTION_k_ERR', 'CORRECTION_N', 'CORRECTION_N_ERR']] = [popt[0], pcov[0][0], popt[1], pcov[1][1]]
     return df
@@ -220,9 +220,6 @@ def add_calculated_displacement(df: pd.DataFrame, subtract_background: bool=Fals
 
     Returns none, because the point is to add a column into the dataframe. 
     '''
-    global subtracted_background
-    subtracted_background = subtract_background
-
     df = df.sort_values(by='FRAME')
 
     # Calculate displacement without background correction
@@ -235,36 +232,35 @@ def add_calculated_displacement(df: pd.DataFrame, subtract_background: bool=Fals
                 displacement = data[0] - data
                 df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse), 'DISPLACEMENT [um]'] = displacement
 
+
     df = add_flow_slope(df)
-
     # Calculate dispolacement with background correction
-    if subtract_background:
-        df['CORRECTED DISPLACEMENT [um]'] = np.nan
+    df['CORRECTED DISPLACEMENT [um]'] = np.nan
 
-        for idx in df['TRACK_ID'].unique():
-            track = df[df["TRACK_ID"] == idx]
-            period_length = max([len(track[track["PULSE_NUMBER"]==pulse]['FRAME'].values) for pulse in track['PULSE_NUMBER'].unique()])
-            if len(track) < period_length:
+    for idx in df['TRACK_ID'].unique():
+        track = df[df["TRACK_ID"] == idx]
+        period_length = max([len(track[track["PULSE_NUMBER"]==pulse]['FRAME'].values) for pulse in track['PULSE_NUMBER'].unique()])
+        if len(track) < period_length:
+            continue
+        # background is calculated as accelerated movement
+        background_func = lambda t, t_1, x_1, k_1, k_2: x_1 + k_1*(t-t_1) + (k_2-k_1)/(2*(period_length))*(t-t_1)**2
+
+        for pulse in track['PULSE_NUMBER'].unique()[:-1]:
+            if len(track[track["PULSE_NUMBER"]==pulse+1]) < 3/4*period_length:
                 continue
-            # background is calculated as accelerated movement
-            background_func = lambda t, t_1, x_1, k_1, k_2: x_1 + k_1*(t-t_1) + (k_2-k_1)/(2*(period_length))*(t-t_1)**2
-
-            for pulse in track['PULSE_NUMBER'].unique()[:-1]:
-                if len(track[track["PULSE_NUMBER"]==pulse+1]) < 3/4*period_length:
-                    continue
-                popt_1 = track.loc[track["PULSE_NUMBER"]==pulse,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
-                popt_2 = track.loc[track["PULSE_NUMBER"]==pulse+1,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
-                t_0 = track.loc[track["PULSE_NUMBER"]==pulse+1, 'FRAME'].values[0]
-                
-                if not (np.isnan(popt_1).any() or np.isnan(popt_2).any()):
-                    k_1, n_1 = popt_1
-                    k_2, _ = popt_2
-                    x_1 = k_1*t_0 + n_1
-                    time = track[track["PULSE_NUMBER"]==pulse+1]["FRAME"].values
-                    data = track[track["PULSE_NUMBER"]==pulse+1]["DISTANCE [um]"].values
-                    corrected_data = background_func(time, time[0], x_1, k_1, k_2) - data 
-                    corrected_data -= corrected_data[0] 
-                    df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse+1), 'CORRECTED DISPLACEMENT [um]'] = corrected_data
+            popt_1 = track.loc[track["PULSE_NUMBER"]==pulse,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
+            popt_2 = track.loc[track["PULSE_NUMBER"]==pulse+1,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
+            t_0 = track.loc[track["PULSE_NUMBER"]==pulse+1, 'FRAME'].values[0]
+            
+            if not (np.isnan(popt_1).any() or np.isnan(popt_2).any()):
+                k_1, n_1 = popt_1
+                k_2, _ = popt_2
+                x_1 = k_1*t_0 + n_1
+                time = track[track["PULSE_NUMBER"]==pulse+1]["FRAME"].values
+                data = track[track["PULSE_NUMBER"]==pulse+1]["DISTANCE [um]"].values
+                corrected_data = background_func(time, time[0], x_1, k_1, k_2) - data 
+                corrected_data -= corrected_data[0] 
+                df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse+1), 'CORRECTED DISPLACEMENT [um]'] = corrected_data
     return df
 
 
@@ -334,7 +330,7 @@ def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_fi
     # print(f'Sanity check: dt = {dt}')
 
     for color, (track, g) in zip(colors, df.groupby('TRACK_ID')):
-        if subtracted_background:
+        if 'CORRECTED DISPLACEMENT [um]' in df.columns:
             g = g.dropna(subset=['CORRECTED DISPLACEMENT [um]'])
             displacement = g['CORRECTED DISPLACEMENT [um]']
         else:

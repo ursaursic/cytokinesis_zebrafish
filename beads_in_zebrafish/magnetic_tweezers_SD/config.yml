@@ -1,4 +1,4 @@
 filepath_measurements_info: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_SD/2_analysis/sd_tweezers_info_1.csv"
 dir_parent: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_SD"
 recalculate: True
-subtract_background: False
+subtract_background: True

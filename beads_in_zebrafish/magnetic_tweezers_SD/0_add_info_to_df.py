@@ -87,6 +87,10 @@ def main(config_path):
         calculate_force(df, calibration)
         # add information about MTs 
         df['MT_STATUS']= df_general_info['MTs'].values[idx]
+
+        # calculate displacement with and without drift correction
+        df = add_calculated_displacement(df, subtract_background=True)
+
         df.attrs['COMMENTS'] = str(df_general_info["comments"].values[idx])
 
         # save the extended df to a file (in analysis folder)
