@@ -10,6 +10,12 @@ import cv2
 from scipy.optimize import curve_fit, Bounds
 import colorcet as cc
 from typing import Callable
+import matplotlib.pyplot as plt
+
+# light_style = '/Users/ursic/PhD/Projects/1_Scripts/extract_material_properties/presentation_style_light.mplstyle'
+# plt.style.use(light_style)
+
+use_matplotlib = True
 
 import bokeh.io
 import bokeh.plotting
@@ -204,6 +210,13 @@ def fit_sufficient(popt, pcov) -> bool:
     return True
 
 
+def r_squared(ydata, yfit):
+    ss_res = np.sum((ydata - yfit) ** 2)
+    ss_tot = np.sum((ydata - np.mean(ydata)) ** 2)
+    R_sq = 1- ss_res/ss_tot
+    return R_sq
+
+
 def MSE(data_x: np.ndarray, data_y: np.ndarray, f: Callable, fit_popt: np.ndarray) -> float:
     data_fit = f(data_x, *fit_popt)
     mse = 1/len(data_y)*sum([data_y[i]**2-data_fit[i]**2 for i in range(len(data_y))])
@@ -370,6 +383,13 @@ def set_time_data(track: pd.DataFrame, pulse: int, dt: float) -> list[np.ndarray
 def plot_viscoelastic_responce(filename: str, df: pd.DataFrame, comments: str):
     if len(df) < 10:
         return None
+    if use_matplotlib:
+        fig = plt.figure(figsize=(6, 4))
+        plt.xlabel('time (s)')
+        plt.ylabel('displacement/force (um/pN)')
+        # plt.title(f'{filename}\ncomments: {comments}')
+        p = 1
+
     p = bokeh.plotting.figure(
         frame_width = 600,
         frame_height = 400,
@@ -385,25 +405,31 @@ def plot_viscoelastic_responce(filename: str, df: pd.DataFrame, comments: str):
 
 
 def add_data_to_plot(p, time_on, time_off, displacement_force_magnet_on, displacement_force_magnet_off, MT_status) -> None:
-    # plot data
-    p.line(x=time_on, y=displacement_force_magnet_on, alpha=0.5, color='green', legend_label='Magnet ON')
-    p.line(x=time_off, y=displacement_force_magnet_off, alpha=0.5, legend_label='Magnet OFF')
-    p.circle(x=time_on, y=displacement_force_magnet_on, alpha=0.5, color='green', legend_label='Magnet ON')
-    p.circle(x=time_off, y=displacement_force_magnet_off, alpha=0.5, legend_label='Magnet OFF')
+    if use_matplotlib:
+        plt.plot(time_on, displacement_force_magnet_on, 'o-', color ='green', alpha=0.5)
+        plt.plot(time_off, displacement_force_magnet_off, 'o-', color='gray', alpha=0.5)
+        plt.ylim(-0.05, 0.75)
 
-    if MT_status == 1 or MT_status == 'y':
-        MT_label = 'MT'
-    elif MT_status == 0 or MT_status == 'n':
-        MT_label = 'noMT'
-    elif MT_status == 'CHX':
-        MT_label = 'CHX'
     else:
-        MT_label = '?'
-    MT_label_on = bokeh.models.Label(x=time_on[-1], y=displacement_force_magnet_on[-1], text_alpha=0.5, text=MT_label)
-    MT_label_off = bokeh.models.Label(x=time_off[-1], y=displacement_force_magnet_off[-1], text_alpha=0.5, text=MT_label)
-    
-    p.add_layout(MT_label_on)
-    p.add_layout(MT_label_off)
+        # plot data
+        p.line(x=time_on, y=displacement_force_magnet_on, alpha=0.5, color='green', legend_label='Magnet ON')
+        p.line(x=time_off, y=displacement_force_magnet_off, alpha=0.5, legend_label='Magnet OFF')
+        p.circle(x=time_on, y=displacement_force_magnet_on, alpha=0.5, color='green', legend_label='Magnet ON')
+        p.circle(x=time_off, y=displacement_force_magnet_off, alpha=0.5, legend_label='Magnet OFF')
+
+        if MT_status == 1 or MT_status == 'y':
+            MT_label = 'MT'
+        elif MT_status == 0 or MT_status == 'n':
+            MT_label = 'noMT'
+        elif MT_status == 'CHX':
+            MT_label = 'CHX'
+        else:
+            MT_label = '?'
+        MT_label_on = bokeh.models.Label(x=time_on[-1], y=displacement_force_magnet_on[-1], text_alpha=0.5, text=MT_label)
+        MT_label_off = bokeh.models.Label(x=time_off[-1], y=displacement_force_magnet_off[-1], text_alpha=0.5, text=MT_label)
+        
+        p.add_layout(MT_label_on)
+        p.add_layout(MT_label_off)
 
 
 def add_fit_to_plot(p, data_x_fit, data_y_fit, magnet_status: str) -> None:
@@ -440,48 +466,68 @@ def calculate_fit_parameters(filename: str, df: pd.DataFrame, comments: str, df_
 
             # Define time and displacement
             time_on, time_off = set_time_data(track, pulse, dt)
+            time_on = list(time_on) + [time_off[0]]
             displacement_force_magnet_on, displacement_force_magnet_off = calculate_displacement_force_ratio(track, pulse)
+            displacement_force_magnet_on = list(displacement_force_magnet_on) + [displacement_force_magnet_off[0]]
             MT_status = track.loc[track['PULSE_NUMBER']==pulse, 'MT_STATUS'].values[0]
             if save_plot_to_filepath:
                 add_data_to_plot(p, time_on, time_off, displacement_force_magnet_on, displacement_force_magnet_off, MT_status)
 
-            # Calculate fit
-            data_x_rising_fit, data_y_rising_fit, popt_rising, pcov_rising = fit_jeffreys_model(time_on, displacement_force_magnet_on, 'rising')
-            data_x_relaxing_fit, data_y_relaxing_fit, popt_relaxing, pcov_relaxing = fit_jeffreys_model(time_off, displacement_force_magnet_off, 'relaxing')
+            if not use_matplotlib:
+                # Calculate fit
+                data_x_rising_fit, data_y_rising_fit, popt_rising, pcov_rising = fit_jeffreys_model(time_on, displacement_force_magnet_on, 'rising')
+                data_x_relaxing_fit, data_y_relaxing_fit, popt_relaxing, pcov_relaxing = fit_jeffreys_model(time_off, displacement_force_magnet_off, 'relaxing')
 
-            # Add fit parameters to the result dataframe
-            new_line = {'FILENAME': filename, 
-                        'TRACK_IDX': track_idx, 
-                        'PULSE_NUMBER': pulse, 
-                        'MT_STATUS': MT_status,
-                        'VISCOEL_PARAMS_RISING_k': np.nan,
-                        'VISCOEL_PARAMS_RISING_eta1': np.nan,
-                        'VISCOEL_PARAMS_RISING_eta2': np.nan,
-                        'VISCOEL_PARAMS_RELAXING_a': np.nan,
-                        'VISCOEL_PARAMS_RELAXING_tau': np.nan,
-                        'COMMENTS': str(comments)
-                        }
+                # Add fit parameters to the result dataframe
+                new_line = {'FILENAME': filename, 
+                            'TRACK_IDX': track_idx, 
+                            'PULSE_NUMBER': pulse, 
+                            'MT_STATUS': MT_status,
+                            'VISCOEL_PARAMS_RISING_k': np.nan,
+                            'VISCOEL_PARAMS_RISING_eta1': np.nan,
+                            'VISCOEL_PARAMS_RISING_eta2': np.nan,
+                            'VISCOEL_PARAMS_RELAXING_a': np.nan,
+                            'VISCOEL_PARAMS_RELAXING_tau': np.nan,
+                            'COMMENTS': str(comments)
+                            }
 
-            flag = [False, False]
-            if all(popt_rising) and fit_sufficient(popt_rising, pcov_rising) and MSE(time_on, displacement_force_magnet_on, jeffreys_model_rising, popt_rising) < 0.0005:
-                new_line['VISCOEL_PARAMS_RISING_k'] = popt_rising[0]
-                new_line['VISCOEL_PARAMS_RISING_eta1'] = popt_rising[1]
-                new_line['VISCOEL_PARAMS_RISING_eta2'] = popt_rising[2]
-                if save_plot_to_filepath:
-                    add_fit_to_plot(p, data_x_rising_fit, data_y_rising_fit, 'Magnet ON')
-                flag[0] = True
+                flag = [False, False]
+                if all(popt_rising) and fit_sufficient(popt_rising, pcov_rising) and MSE(time_on, displacement_force_magnet_on, jeffreys_model_rising, popt_rising) < 0.0005:
+                    new_line['VISCOEL_PARAMS_RISING_k'] = popt_rising[0]
+                    new_line['VISCOEL_PARAMS_RISING_eta1'] = popt_rising[1]
+                    new_line['VISCOEL_PARAMS_RISING_eta2'] = popt_rising[2]
+                    if save_plot_to_filepath and not use_matplotlib:
+                        add_fit_to_plot(p, data_x_rising_fit, data_y_rising_fit, 'Magnet ON')
+                    flag[0] = True
 
-            if all(popt_relaxing) and fit_sufficient(popt_relaxing, pcov_relaxing) and MSE(time_off, displacement_force_magnet_off, jeffreys_model_relaxing, popt_relaxing) < 0.0005:  
-                new_line['VISCOEL_PARAMS_RELAXING_a'] = popt_relaxing[0]
-                new_line['VISCOEL_PARAMS_RELAXING_tau'] = popt_relaxing[1]
-                if save_plot_to_filepath:
-                    add_fit_to_plot(p, data_x_relaxing_fit, data_y_relaxing_fit, 'Magnet OFF')
-                flag[1] = True
+                if all(popt_relaxing) and fit_sufficient(popt_relaxing, pcov_relaxing) and MSE(time_off, displacement_force_magnet_off, jeffreys_model_relaxing, popt_relaxing) < 0.0005:  
+                    new_line['VISCOEL_PARAMS_RELAXING_a'] = popt_relaxing[0]
+                    new_line['VISCOEL_PARAMS_RELAXING_tau'] = popt_relaxing[1]
+                    if save_plot_to_filepath  and not use_matplotlib:
+                        add_fit_to_plot(p, data_x_relaxing_fit, data_y_relaxing_fit, 'Magnet OFF')
+                    flag[1] = True
 
-            if any(flag):
-                df_results = pd.concat([df_results,pd.DataFrame(new_line, index=[idx])])
-                idx += 1
-        if save_plot_to_filepath:
+                if any(flag):
+                    df_results = pd.concat([df_results,pd.DataFrame(new_line, index=[idx])])
+                    idx += 1
+
+        if save_plot_to_filepath  and not use_matplotlib:
             save_plot(p, filename, track_idx, save_plot_to_filepath)
+        if use_matplotlib:
+            plt.savefig(f"{save_plot_to_filepath}/dispacement_force_curves/{filename}_{track_idx}.png", dpi=300)
     return df_results
 
+
+
+def jeff_full(t, k, eta_1, eta_2, F_0, t_1) -> np.ndarray:
+    a = 1 - 1 / ((eta_2 / (k * t_1)) * (1 - np.exp(- k* t_1 / eta_1)) + 1) 
+
+    # rising
+    x_1 = F_0 / k * (1 - np.exp(-k * t / eta_1)) + F_0 * t / eta_2
+
+    # relaxing
+    x_2 = (F_0 / k * (1 - np.exp(-k * t_1 / eta_1)) + F_0 * t_1 / eta_2) * (a * np.exp(-(t-t_1) * 2 * k / eta_1) + (1-a))
+
+    # combined
+    x = list(x_1[:len(t[t<t_1])]) + list(x_2[len(t[t<t_1]):])
+    return x
