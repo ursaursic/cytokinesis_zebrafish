@@ -101,9 +101,6 @@ def main(config_path):
             store.put('df', df)
             store.get_storer('df').attrs.metadata = df.attrs['COMMENTS']
 
-        # except:
-        #     print(f'{filename} did not go through :(')
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process some parameters.')

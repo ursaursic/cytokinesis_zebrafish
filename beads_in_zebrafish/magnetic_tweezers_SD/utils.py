@@ -25,13 +25,8 @@ import bokeh.models
 # define force calibration parameters
 #######
 force_calibration_params = {
-    500: [5.59472213e+02, -4.17780556e+01,  1.61519352e+01, -8.84746192e+13],
-    '500': [5.59472213e+02, -4.17780556e+01,  1.61519352e+01, -8.84746192e+13],
-    1000: [9.00468885e+02, -5.10553973e+01,  1.96828094e+01,  1.05746977e+14],
-    '1000': [9.00468885e+02, -5.10553973e+01,  1.96828094e+01,  1.05746977e+14],
-    2000: [6.47755226e+02, -5.16372481e+01, 1.87872313e+01, 4.49671461e+08],
-    '2000': [6.47755226e+02, -5.16372481e+01, 1.87872313e+01, 4.49671461e+08],
-    'RANGE': [9.00468885e+02, -5.10553973e+01,  1.96828094e+01,  1.05746977e+14]
+    1000: [1.26565988e+02, 5.08679217e-03, 1.74898841e+03, 2.76025215e-02],
+    '1000': [1.26565988e+02, 5.08679217e-03, 1.74898841e+03, 2.76025215e-02],
 }
 
 ################################################################################
@@ -106,7 +101,7 @@ def calculate_force(df: pd.DataFrame, calibration: int | str):
     Calculates force at the distance of the bead, depending on the force calibration parameters (defined above).
     '''
     a1, k1, a2, k2 = force_calibration_params[calibration]
-    df['FORCE [pN]'] = a1*np.exp(df['DISTANCE [um]']/k1)+a2*np.exp(df['DISTANCE [um]']/k2)
+    df['FORCE [pN]'] = a1*np.exp(-df['DISTANCE [um]']*k1)+a2*np.exp(-df['DISTANCE [um]']*k2)
     df.loc[df['MAGNET_STATUS']==0, 'FORCE [pN]'] = 0
 
 
@@ -526,7 +521,7 @@ def jeff_full(t, k, eta_1, eta_2, F_0, t_1) -> np.ndarray:
     x_1 = F_0 / k * (1 - np.exp(-k * t / eta_1)) + F_0 * t / eta_2
 
     # relaxing
-    x_2 = (F_0 / k * (1 - np.exp(-k * t_1 / eta_1)) + F_0 * t_1 / eta_2) * (a * np.exp(-(t-t_1) * 2 * k / eta_1) + (1-a))
+    x_2 = (F_0 / k * (1 - np.exp(-k * t_1 / eta_1)) + F_0 * t_1 / eta_2) * (a * np.exp(-(t-t_1) * k / eta_1) + (1-a))
 
     # combined
     x = list(x_1[:len(t[t<t_1])]) + list(x_2[len(t[t<t_1]):])

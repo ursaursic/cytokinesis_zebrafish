@@ -56,12 +56,12 @@ def main(config_path):
             else:
                 print('Intermendiate plots not saved.')
 
-        if save_mode == 'ipynb':
-            df_results = calculate_fit_parameters(filename, df, comments, df_results, save_plot_to_filepath='ipynb')
-        elif save_mode == 'png':
-            df_results = calculate_fit_parameters(filename, df, comments, df_results, save_plot_to_filepath=f'{dir_plots}')
-        else:
-            print('Displacement-force curves not saved.')
+        # if save_mode == 'ipynb':
+        #     df_results = calculate_fit_parameters(filename, df, comments, df_results, save_plot_to_filepath='ipynb')
+        # elif save_mode == 'png':
+        #     df_results = calculate_fit_parameters(filename, df, comments, df_results, save_plot_to_filepath=f'{dir_plots}')
+        # else:
+        #     print('Displacement-force curves not saved.')
 
 
     if subtract_background:
