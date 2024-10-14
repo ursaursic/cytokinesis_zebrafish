@@ -218,7 +218,7 @@ def MSE(data_x: np.ndarray, data_y: np.ndarray, f: Callable, fit_popt: np.ndarra
     return mse
 
 
-def add_calculated_displacement(df: pd.DataFrame, subtract_background: bool=False) -> pd.DataFrame:
+def add_calculated_displacement(df: pd.DataFrame) -> pd.DataFrame:
     '''This function substracts the signal from the background (so that we get increasing displacement after each first point of the new pulse). It creates a new column in the df dataframe with the displacement values after each pulse. 
 
     ---
@@ -321,7 +321,7 @@ def plot_trajectories(filename: str, df: pd.DataFrame, comments: str, save_to_fi
         bokeh.io.export_png(p, filename=f"{save_to_filepath}")
 
 def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_filepath: str) -> None:
-    if len(df) < 10:
+    if len(df['CORRECTED DISPLACEMENT [um]'].dropna()) < 10:
         return None
     p = bokeh.plotting.figure(
             frame_width = 600,
