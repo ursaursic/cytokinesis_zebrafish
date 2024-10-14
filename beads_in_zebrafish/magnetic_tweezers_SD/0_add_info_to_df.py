@@ -100,7 +100,7 @@ def main(config_path):
         df['MT_STATUS'] = df_general_info['MTs'].values[idx]
 
         # Calculate displacement, with and without drift correction
-        df = add_calculated_displacement(df, subtract_background=True)
+        df = add_calculated_displacement(df)
 
         # Add comments from the general info to the dataframe's metadata
         df.attrs['COMMENTS'] = str(df_general_info["comments"].values[idx])
