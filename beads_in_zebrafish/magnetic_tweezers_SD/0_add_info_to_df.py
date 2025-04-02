@@ -8,7 +8,7 @@ This script processes magnetic tweezers data and generates CSV files with additi
 - Magnet pulses information
 - Microtubule (MT) status
 
-It also saves images of the tip with outlines. This script only needs to be run once. Further analysis is done in a different file.
+This script only needs to be run once. Further analysis is done in a different file.
 """
 
 import pandas as pd
@@ -36,6 +36,7 @@ def main(config_path):
     dir_plots = os.path.join(config['dir_parent'], '3_plots')  # Folder for saving plots
     dir_analysis = os.path.join(config['dir_parent'], '2_analysis')  # Folder for saving analysis results
     recalculate = config['recalculate']  # Whether to recalculate measurements if they already exist
+    pix_size = config['pix_size'] 
 
     # Directory where extended measurement data will be saved
     dir_measurements_extended = os.path.join(dir_analysis, 'measurements_extended_info')
@@ -86,7 +87,7 @@ def main(config_path):
 
         # Calculate distance from tip if tip information is available
         if tip:
-            calculate_distance_from_tip(df, tip) 
+            calculate_distance_from_tip(df, tip, pix_size)
         else:
             # Skip if no tip information is found
             print(f"No tip information found for {filename}. Skipping this measurement.")

@@ -88,9 +88,9 @@ def plot_tip(df_tracks: pd.DataFrame, tip_end: [int, int], save_img_to_path: str
     
 
 
-def calculate_distance_from_tip(df: pd.DataFrame, tip: list) -> None:
+def calculate_distance_from_tip(df: pd.DataFrame, tip: list, pix_size: float) -> None:
     '''
-    Calculates distance from the tip end point (tip_point) to bead and adds this to the dataframe df.
+    Calculates distance from the tip end point (tip_point is in pixels) to bead and adds this to the dataframe df. The tracks POSITION_X and POSITION_Y are in um. 
     '''
     if len(tip) == 2:
         df['DISTANCE [um]'] = np.sqrt((df['POSITION_X']-tip[0]*pix_size)**2+(df['POSITION_Y']-tip[1]*pix_size)**2)
