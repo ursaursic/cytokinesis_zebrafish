@@ -12,9 +12,6 @@ import colorcet as cc
 from typing import Callable
 import matplotlib.pyplot as plt
 
-# light_style = '/Users/ursic/PhD/Projects/1_Scripts/extract_material_properties/presentation_style_light.mplstyle'
-# plt.style.use(light_style)
-
 use_matplotlib = True
 
 import bokeh.io
@@ -28,6 +25,9 @@ force_calibration_params = {
     1000: [1.26565988e+02, 5.08679217e-03, 1.74898841e+03, 2.76025215e-02],
     '1000': [1.26565988e+02, 5.08679217e-03, 1.74898841e+03, 2.76025215e-02],
 }
+
+pix_size = 0.54 # um
+window = 1/2 # the window for background subtraction
 
 ################################################################################
 # FUNCTIONS FOR add_info_to_df
@@ -62,8 +62,10 @@ def find_tip(filepath_tip: str, threshold_tip: int, save_img_to_path: str, endpo
             if save_img_to_path=='ipynb':
                 bokeh.io.show(p)
             else:
+                print("Saving tip image... to ", save_img_to_path)
                 bokeh.io.export_png(p, filename=f"{save_img_to_path}")
         if endpoint:
+            print(tip_end)
             return tip_end
         else: 
             return tip_outline
@@ -72,15 +74,26 @@ def find_tip(filepath_tip: str, threshold_tip: int, save_img_to_path: str, endpo
         return False
 
 
+def plot_tip(df_tracks: pd.DataFrame, tip_end: [int, int], save_img_to_path: str) -> None:
+    pix_size = 0.54 # (um)
+    # plot in pixels
+    tracks_x, tracks_y = df_tracks['POSITION_X'].values, df_tracks['POSITION_Y'].values
+    plt.figure()
+    plt.plot(tip_end[0], tip_end[1], 'ro')
+    plt.plot(tracks_x/pix_size, tracks_y/pix_size, 'g.', alpha =0.2)
+    plt.xlim(left=0)
+    plt.ylim(bottom=0, top=np.max((np.max(tracks_y)/pix_size, 2*tip_end[1])))
+    plt.savefig(save_img_to_path)
+    plt.close()
+    
+
+
 def calculate_distance_from_tip(df: pd.DataFrame, tip: list) -> None:
     '''
     Calculates distance from the tip end point (tip_point) to bead and adds this to the dataframe df.
     '''
     if len(tip) == 2:
-        df['DISTANCE [um]'] = np.sqrt((df['POSITION_X']-tip[0])**2+(df['POSITION_Y']-tip[1])**2)
-    else:
-        # TODO (find the nearest point to tip)
-        pass
+        df['DISTANCE [um]'] = np.sqrt((df['POSITION_X']-tip[0]*pix_size)**2+(df['POSITION_Y']-tip[1]*pix_size)**2)
 
 
 def add_magnet_status(df: pd.DataFrame, magnet_info: list[int]) -> None:
@@ -122,13 +135,63 @@ def add_MT_status(df: pd.DataFrame, MT_info: np.ndarray | str):
                 df['MT_STATUS'].values[i] = int(0)
 
 
-################################################################################
-# FUNCTIONS FOR calculate_viscoelastic_responce
-################################################################################
+def add_calculated_displacement(df: pd.DataFrame) -> pd.DataFrame:
+    '''This function substracts the signal from the background (so that we get increasing displacement after each first point of the new pulse). It creates a new column in the df dataframe with the displacement values after each pulse. 
+
+    ---
+    df:             dataframe with bead tracks
+    substract_background: calculate displacement considering the background flows. If true, both displacement and corrected displacement will be calculated.
+    ---
+
+    Returns none, because the point is to add a column into the dataframe. 
+    '''
+    df = df.sort_values(by='FRAME')
+
+    # Calculate displacement without background correction
+    df['DISPLACEMENT [um]'] = np.nan
+    for idx in df['TRACK_ID'].unique():
+        track = df[df["TRACK_ID"] == idx]
+        for pulse in df['PULSE_NUMBER'].unique():
+            data = df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse), 'DISTANCE [um]'].values
+            if len(data)>0:
+                displacement = data[0] - data
+                df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse), 'DISPLACEMENT [um]'] = displacement
+
+
+    df = add_flow_slope(df)
+    # Calculate dispolacement with background correction
+    df['CORRECTED DISPLACEMENT [um]'] = np.nan
+
+    for idx in df['TRACK_ID'].unique():
+        track = df[df["TRACK_ID"] == idx]
+        period_length = max([len(track[track["PULSE_NUMBER"]==pulse]['FRAME'].values) for pulse in track['PULSE_NUMBER'].unique()])
+        if len(track) < period_length:
+            continue
+        # background is calculated as accelerated movement
+        background_func = lambda t, t_1, x_1, k_1, k_2: x_1 + k_1*(t-t_1) + (k_2-k_1)/(2*(period_length))*(t-t_1)**2
+
+        for pulse in track['PULSE_NUMBER'].unique()[:-1]:
+            if len(track[track["PULSE_NUMBER"]==pulse+1]) < 3/4*period_length:
+                continue
+            popt_1 = track.loc[track["PULSE_NUMBER"]==pulse,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
+            popt_2 = track.loc[track["PULSE_NUMBER"]==pulse+1,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
+            t_0 = track.loc[track["PULSE_NUMBER"]==pulse+1, 'FRAME'].values[0]
+            
+            if not (np.isnan(popt_1).any() or np.isnan(popt_2).any()):
+                k_1, n_1 = popt_1
+                k_2, _ = popt_2
+                x_1 = k_1*t_0 + n_1
+                time = track[track["PULSE_NUMBER"]==pulse+1]["FRAME"].values
+                data = track[track["PULSE_NUMBER"]==pulse+1]["DISTANCE [um]"].values
+                corrected_data = background_func(time, time[0], x_1, k_1, k_2) - data 
+                corrected_data -= corrected_data[0] 
+                df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse+1), 'CORRECTED DISPLACEMENT [um]'] = corrected_data
+    return df
+
 
 def add_flow_slope(df: pd.DataFrame) -> pd.DataFrame:
     '''
-    This function checks out the bead tracks. It takes into account the last 2/3 of the OFF phase before the new period starts. It calculates the slopes where possible and adds them into the data frame.  
+    This function checks out the bead tracks. It takes into account the last window*length of the OFF phase before the new period starts. It calculates the slopes where possible and adds them into the data frame.  
     ---
     df:             dataframe with bead tracks
     ---
@@ -136,15 +199,15 @@ def add_flow_slope(df: pd.DataFrame) -> pd.DataFrame:
     '''
 
     df[['CORRECTION_k', 'CORRECTION_k_ERR', 'CORRECTION_N', 'CORRECTION_N_ERR']] = [np.nan, np.nan, np.nan, np.nan]
-
+    
     for idx in df['TRACK_ID'].unique():
         track = df[df["TRACK_ID"] == idx]
         for pulse in track['PULSE_NUMBER'].unique():
             if len(track[track['PULSE_NUMBER']==pulse]) <= 15:
                 continue
             magnet_off_length = len(track.loc[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==0), 'FRAME'])
-            xdata = track.loc[track['PULSE_NUMBER']==pulse, 'FRAME'].values[-int(2/3*magnet_off_length):]
-            ydata = track.loc[track['PULSE_NUMBER']==pulse, 'DISTANCE [um]'].values[-int(2/3*magnet_off_length):]
+            xdata = track.loc[track['PULSE_NUMBER']==pulse, 'FRAME'].values[-int(window*magnet_off_length):]
+            ydata = track.loc[track['PULSE_NUMBER']==pulse, 'DISTANCE [um]'].values[-int(window*magnet_off_length):]
             f = lambda x, *p: p[0]*x + p[1]
             popt, pcov = curve_fit(f, xdata, ydata, p0=[-0.1, 100], nan_policy='raise')
             if (np.sqrt(pcov[1][1])/popt[1] < 1) & (np.sqrt(pcov[0][0])/popt[0] < 1) & (MSE(xdata, ydata, f, popt) < 0.5):
@@ -152,15 +215,9 @@ def add_flow_slope(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-
-def jeffreys_model_rising(t, k, eta_1, eta_2) -> None:
-    f = 1/k * (1 - np.exp(-k*t/eta_1)) + t/eta_2
-    return f
-
-
-def jeffreys_model_relaxing(t, a, tau_r) -> None:
-    f = (1-a)*np.exp(-t/tau_r) + a
-    return f
+################################################################################
+# FUNCTIONS FOR calculate_viscoelastic_responce
+################################################################################
 
 
 def fit_jeffreys_model(data_x: np.ndarray, data_y: np.ndarray, phase: str) -> np.ndarray:
@@ -218,60 +275,6 @@ def MSE(data_x: np.ndarray, data_y: np.ndarray, f: Callable, fit_popt: np.ndarra
     return mse
 
 
-def add_calculated_displacement(df: pd.DataFrame) -> pd.DataFrame:
-    '''This function substracts the signal from the background (so that we get increasing displacement after each first point of the new pulse). It creates a new column in the df dataframe with the displacement values after each pulse. 
-
-    ---
-    df:             dataframe with bead tracks
-    substract_background: calculate displacement considering the background flows. If true, both displacement and corrected displacement will be calculated.
-    ---
-
-    Returns none, because the point is to add a column into the dataframe. 
-    '''
-    df = df.sort_values(by='FRAME')
-
-    # Calculate displacement without background correction
-    df['DISPLACEMENT [um]'] = np.nan
-    for idx in df['TRACK_ID'].unique():
-        track = df[df["TRACK_ID"] == idx]
-        for pulse in df['PULSE_NUMBER'].unique():
-            data = df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse), 'DISTANCE [um]'].values
-            if len(data)>0:
-                displacement = data[0] - data
-                df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse), 'DISPLACEMENT [um]'] = displacement
-
-
-    df = add_flow_slope(df)
-    # Calculate dispolacement with background correction
-    df['CORRECTED DISPLACEMENT [um]'] = np.nan
-
-    for idx in df['TRACK_ID'].unique():
-        track = df[df["TRACK_ID"] == idx]
-        period_length = max([len(track[track["PULSE_NUMBER"]==pulse]['FRAME'].values) for pulse in track['PULSE_NUMBER'].unique()])
-        if len(track) < period_length:
-            continue
-        # background is calculated as accelerated movement
-        background_func = lambda t, t_1, x_1, k_1, k_2: x_1 + k_1*(t-t_1) + (k_2-k_1)/(2*(period_length))*(t-t_1)**2
-
-        for pulse in track['PULSE_NUMBER'].unique()[:-1]:
-            if len(track[track["PULSE_NUMBER"]==pulse+1]) < 3/4*period_length:
-                continue
-            popt_1 = track.loc[track["PULSE_NUMBER"]==pulse,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
-            popt_2 = track.loc[track["PULSE_NUMBER"]==pulse+1,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
-            t_0 = track.loc[track["PULSE_NUMBER"]==pulse+1, 'FRAME'].values[0]
-            
-            if not (np.isnan(popt_1).any() or np.isnan(popt_2).any()):
-                k_1, n_1 = popt_1
-                k_2, _ = popt_2
-                x_1 = k_1*t_0 + n_1
-                time = track[track["PULSE_NUMBER"]==pulse+1]["FRAME"].values
-                data = track[track["PULSE_NUMBER"]==pulse+1]["DISTANCE [um]"].values
-                corrected_data = background_func(time, time[0], x_1, k_1, k_2) - data 
-                corrected_data -= corrected_data[0] 
-                df.loc[(df['TRACK_ID']==idx) & (df["PULSE_NUMBER"]==pulse+1), 'CORRECTED DISPLACEMENT [um]'] = corrected_data
-    return df
-
-
 ################################################################################
 # FUNCTIONS FOR PLOTTING
 ################################################################################
@@ -309,7 +312,7 @@ def plot_trajectories(filename: str, df: pd.DataFrame, comments: str, save_to_fi
                 popt = track.loc[track["PULSE_NUMBER"]==pulse,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
                 if popt.size != 0 and not np.isnan(popt).any():
                     f = lambda x, k, N: k*x + N  
-                    p.circle(x=xdata[-int(2/3*magnet_off_length):], y=ydata[-int(2/3*magnet_off_length):], alpha=0.3, size=2, color='red', legend_label='Data for drift fit')
+                    p.circle(x=xdata[-int(window*magnet_off_length):], y=ydata[-int(window*magnet_off_length):], alpha=0.3, size=2, color='red', legend_label='Data for drift fit')
                     x_fit = np.linspace(min(xdata), max(xdata), 30)
                     y_fit = f(x_fit, *popt)
                     p.line(x=x_fit, y=y_fit, alpha=0.3, line_width=2, color='black', legend_label='Drift fit')
@@ -375,30 +378,6 @@ def set_time_data(track: pd.DataFrame, pulse: int, dt: float) -> list[np.ndarray
     return time_on, time_off
 
 
-def plot_viscoelastic_responce(filename: str, df: pd.DataFrame, comments: str):
-    if len(df) < 10:
-        return None
-    if use_matplotlib:
-        fig = plt.figure(figsize=(6, 4))
-        plt.xlabel('time (s)')
-        plt.ylabel('displacement/force (um/pN)')
-        # plt.title(f'{filename}\ncomments: {comments}')
-        p = 1
-
-    p = bokeh.plotting.figure(
-        frame_width = 600,
-        frame_height = 400,
-        x_axis_label='time (s)',
-        y_axis_label='displacement/force (um/pN)',
-        title=f'{filename}\ncomments: {comments}'
-    )
-    # mytext = bokeh.models.Label(x=70, y=70, text=f'{comments}')
-
-    # p.add_layout(mytext, 'right')
-    p.add_layout(bokeh.models.Legend(), 'right')
-    return p
-
-
 def add_data_to_plot(p, time_on, time_off, displacement_force_magnet_on, displacement_force_magnet_off, MT_status) -> None:
     if use_matplotlib:
         plt.plot(time_on, displacement_force_magnet_on, 'o-', color ='green', alpha=0.5)
@@ -425,10 +404,6 @@ def add_data_to_plot(p, time_on, time_off, displacement_force_magnet_on, displac
         
         p.add_layout(MT_label_on)
         p.add_layout(MT_label_off)
-
-
-def add_fit_to_plot(p, data_x_fit, data_y_fit, magnet_status: str) -> None:
-    p.line(x=data_x_fit, y=data_y_fit, alpha=0.5, color='black', legend_label=magnet_status)
 
 
 def save_plot(p, filename, track_idx, save_to_filepath):
@@ -515,6 +490,12 @@ def calculate_fit_parameters(filename: str, df: pd.DataFrame, comments: str, df_
 
 
 def jeff_full(t, k, eta_1, eta_2, F_0, t_1) -> np.ndarray:
+    '''
+    fit Jeffrey's rising and relaxing phases to data. Jefferey's model is composed of a sping with an elastic constant k, parralely bound to a dashpod with viscosity eta_1. This component is also sequentially bound to another dashpod with viscosity eta_2. The model is fitted with a "rising pahse", where we assume a constant force at each time step and a "relaxing phase" where the force is 0, but the system is relaxing after the force was turned off. 
+          |--- dashpod (eta_1)--|
+    |-----|                     |---- dashpod (eta 2) -----> F
+          |--- spring (k) ------|
+    '''
     a = 1 - 1 / ((eta_2 / (k * t_1)) * (1 - np.exp(- k* t_1 / eta_1)) + 1) 
 
     # rising
@@ -522,6 +503,25 @@ def jeff_full(t, k, eta_1, eta_2, F_0, t_1) -> np.ndarray:
 
     # relaxing
     x_2 = (F_0 / k * (1 - np.exp(-k * t_1 / eta_1)) + F_0 * t_1 / eta_2) * (a * np.exp(-(t-t_1) * k / eta_1) + (1-a))
+
+    # combined
+    x = list(x_1[:len(t[t<t_1])]) + list(x_2[len(t[t<t_1]):])
+    return x
+
+
+def KV_full(t, k, eta, F_0, t_1) -> np.ndarray:
+    '''
+    fit Kelvin-Voigt rising and relaxing phases to data. 
+          |--- dashpod (eta)----|
+    |-----|                     | -----> F
+          |--- spring (k) ------|
+    '''
+
+    # rising
+    x_1 = F_0 / k * (1 - np.exp(-k * t / eta))
+
+    # relaxing
+    x_2 = F_0 / k * (1 - np.exp(-k * t_1 / eta)) * (np.exp(-(t-t_1) * k / eta))
 
     # combined
     x = list(x_1[:len(t[t<t_1])]) + list(x_2[len(t[t<t_1]):])

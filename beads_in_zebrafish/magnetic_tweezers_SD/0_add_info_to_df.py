@@ -1,6 +1,6 @@
 """
 Author: Ursa Ursic
-Last updated: 28.7.2024
+Last updated: 2.5.2025
 
 This script processes magnetic tweezers data and generates CSV files with additional information:
 - Distance from tip
@@ -79,12 +79,17 @@ def main(config_path):
         elif 'tip_x' in df_general_info.columns:
             # If tip position is already available, use it directly
             tip = list(df_general_info[['tip_x', 'tip_y']].values[idx])
+            dir_tip_imgs = os.path.join(dir_plots, 'tip_images')
+            if not os.path.exists(dir_tip_imgs):
+                os.mkdir(dir_tip_imgs)
+            plot_tip(df, tip, os.path.join(dir_tip_imgs, f'{filename}.png'))
 
         # Calculate distance from tip if tip information is available
         if tip:
             calculate_distance_from_tip(df, tip) 
         else:
             # Skip if no tip information is found
+            print(f"No tip information found for {filename}. Skipping this measurement.")
             continue
 
         # Add information about magnet pulse status to the dataframe
