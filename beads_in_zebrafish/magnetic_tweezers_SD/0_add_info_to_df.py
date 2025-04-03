@@ -64,26 +64,13 @@ def main(config_path):
         # Load raw data from the measurement file
         df = pd.read_csv(filepath, skiprows=[1, 2, 3], encoding="utf-8")
 
-        # Check if tip information is available and process accordingly
-        if 'before_file' in df_general_info.columns:
-            # Load the tip image, save the outline, and calculate distance from the tip
-            filepath_tip = df_general_info['before_file'].values[idx]
-            threshold_tip = df_general_info['tip_threshold'].values[idx]
-            dir_tip_imgs = os.path.join(dir_plots, 'tip_images')
-            if not os.path.exists(dir_tip_imgs):
-                os.mkdir(dir_tip_imgs)
-            filepath_tip_outline = os.path.join(dir_tip_imgs, f'{filename}.png')
-
-            # Find the tip position and save the image with tip outline
-            tip = find_tip(filepath_tip, threshold_tip, save_img_to_path=filepath_tip_outline, endpoint=True)
-
-        elif 'tip_x' in df_general_info.columns:
+        if 'tip_x' in df_general_info.columns:
             # If tip position is already available, use it directly
             tip = list(df_general_info[['tip_x', 'tip_y']].values[idx])
             dir_tip_imgs = os.path.join(dir_plots, 'tip_images')
             if not os.path.exists(dir_tip_imgs):
                 os.mkdir(dir_tip_imgs)
-            plot_tip(df, tip, os.path.join(dir_tip_imgs, f'{filename}.png'))
+            plot_tip(df, tip, os.path.join(dir_tip_imgs, f'{filename}.png'), pix_size)
 
         # Calculate distance from tip if tip information is available
         if tip:

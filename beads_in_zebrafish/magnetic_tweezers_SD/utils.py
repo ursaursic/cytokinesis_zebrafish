@@ -22,60 +22,23 @@ import bokeh.models
 # define force calibration parameters
 #######
 force_calibration_params = {
-    1000: [1.26565988e+02, 5.08679217e-03, 1.74898841e+03, 2.76025215e-02],
-    '1000': [1.26565988e+02, 5.08679217e-03, 1.74898841e+03, 2.76025215e-02],
+    1000: [1.74898497e+03, 2.76024353e-02, 1.26564525e+02, 5.08675459e-03],
+    '1000': [1.74898497e+03, 2.76024353e-02, 1.26564525e+02, 5.08675459e-03],
 }
 
-pix_size = 0.54 # um
+
 window = 1/2 # the window for background subtraction
 
 ################################################################################
 # FUNCTIONS FOR add_info_to_df
 ################################################################################
 
-def find_tip(filepath_tip: str, threshold_tip: int, save_img_to_path: str, endpoint: bool) -> list:
-    img = cv2.imread(filepath_tip, cv2.IMREAD_UNCHANGED)
-    blurred_img = cv2.GaussianBlur(img, (5, 5), 0)
-    tip_mask = blurred_img < threshold_tip
-    tip_mask = np.array(tip_mask.astype(int))
-    tip_outline = np.array([[0, 0]])
-    tip_end = [0, 0]
+def plot_tip(df_tracks: pd.DataFrame, tip_end: [int, int], save_img_to_path: str, pix_size: float) -> None:
+    '''
+    .
+    Plot where the tip is in relationship to all the tracks. Save the images for sanity check.
+    '''
 
-    boundaries_for_tip = np.array([[img.shape[0]//5, 4*img.shape[0]//5], [1, img.shape[1]*1//4]] , dtype=int)
-
-    for i in range(boundaries_for_tip[0, 0], boundaries_for_tip[0, 1]):
-        for j in range(boundaries_for_tip[1, 0], boundaries_for_tip[1, 1]):
-            if np.sum(tip_mask[i, j] != tip_mask[i-1:i+1, j-1:j+1])==2:
-                tip_outline = np.concatenate([tip_outline, [[j, i]]], axis=0)
-                if j > tip_end[0]:
-                    tip_end = [j, i]
-
-    if tip_outline.shape[0] > 20: 
-        if save_img_to_path: 
-            filename = os.path.basename(save_img_to_path).split('/')[-1].split('.')[0] 
-            p = bokeh.plotting.figure(width=800, height=800, title=f"Yay, we found a tip!!! \n file: {filename}")
-            p.title.text_font_size = '16pt'
-            p.x_range.range_padding = p.y_range.range_padding = 0
-            p.image(image=[img], x=0, y=0, dw=img.shape[0], dh=img.shape[1])
-            p.circle(x=tip_outline[:, 0], y=tip_outline[:, 1], color='red')
-            p.star(x=tip_end[0], y=tip_end[1], color='cyan', size=15)
-            if save_img_to_path=='ipynb':
-                bokeh.io.show(p)
-            else:
-                print("Saving tip image... to ", save_img_to_path)
-                bokeh.io.export_png(p, filename=f"{save_img_to_path}")
-        if endpoint:
-            print(tip_end)
-            return tip_end
-        else: 
-            return tip_outline
-    else:
-        print("No tip found... try another threshold.")
-        return False
-
-
-def plot_tip(df_tracks: pd.DataFrame, tip_end: [int, int], save_img_to_path: str) -> None:
-    pix_size = 0.54 # (um)
     # plot in pixels
     tracks_x, tracks_y = df_tracks['POSITION_X'].values, df_tracks['POSITION_Y'].values
     plt.figure()
@@ -85,11 +48,11 @@ def plot_tip(df_tracks: pd.DataFrame, tip_end: [int, int], save_img_to_path: str
     plt.ylim(bottom=0, top=np.max((np.max(tracks_y)/pix_size, 2*tip_end[1])))
     plt.savefig(save_img_to_path)
     plt.close()
-    
 
 
 def calculate_distance_from_tip(df: pd.DataFrame, tip: list, pix_size: float) -> None:
     '''
+    .
     Calculates distance from the tip end point (tip_point is in pixels) to bead and adds this to the dataframe df. The tracks POSITION_X and POSITION_Y are in um. 
     '''
     if len(tip) == 2:
@@ -97,6 +60,10 @@ def calculate_distance_from_tip(df: pd.DataFrame, tip: list, pix_size: float) ->
 
 
 def add_magnet_status(df: pd.DataFrame, magnet_info: list[int]) -> None:
+    '''
+    .
+    Add the information weather the magnemagnet is on or off. 
+    '''
     first_pulse, t_on, t_off = magnet_info
     # number of pulses in total
     N_pulses = np.max(df['FRAME'])//(t_on+t_off)
@@ -111,6 +78,7 @@ def add_magnet_status(df: pd.DataFrame, magnet_info: list[int]) -> None:
 
 def calculate_force(df: pd.DataFrame, calibration: int | str):
     '''
+    .
     Calculates force at the distance of the bead, depending on the force calibration parameters (defined above).
     '''
     a1, k1, a2, k2 = force_calibration_params[calibration]
@@ -118,25 +86,27 @@ def calculate_force(df: pd.DataFrame, calibration: int | str):
     df.loc[df['MAGNET_STATUS']==0, 'FORCE [pN]'] = 0
 
 
-def add_MT_status(df: pd.DataFrame, MT_info: np.ndarray | str):
-    '''
-    Add information about the microtubules into the data frame.
-    '''
-    df['MT_STATUS'] = np.nan
-    if len(MT_info) > 1:
-        for (i, phase) in enumerate(['m_phase_1', 'i_phase_1', 'm_phase_2', 'i_phase_2']):
-            if (MT_info[i*2] != 'na') & (MT_info[i*2+1] != 'na'):
-                df.loc[df['FRAME'].isin(range(int(MT_info[i*2]), int(MT_info[i*2+1]))), 'PHASE'] = phase
+# def add_MT_status(df: pd.DataFrame, MT_info: np.ndarray | str):
+#     '''
+#     Add information about the microtubules into the data frame.
+#     '''
+#     df['MT_STATUS'] = np.nan
+#     if len(MT_info) > 1:
+#         for (i, phase) in enumerate(['m_phase_1', 'i_phase_1', 'm_phase_2', 'i_phase_2']):
+#             if (MT_info[i*2] != 'na') & (MT_info[i*2+1] != 'na'):
+#                 df.loc[df['FRAME'].isin(range(int(MT_info[i*2]), int(MT_info[i*2+1]))), 'PHASE'] = phase
         
-        for i in range(len(df)):
-            if type(df['PHASE'].values[i])==str and df['PHASE'].values[i].startswith('i'):
-                df['MT_STATUS'].values[i] = int(1)
-            elif type(df['PHASE'].values[i])==str and df['PHASE'].values[i].startswith('m'):
-                df['MT_STATUS'].values[i] = int(0)
+#         for i in range(len(df)):
+#             if type(df['PHASE'].values[i])==str and df['PHASE'].values[i].startswith('i'):
+#                 df['MT_STATUS'].values[i] = int(1)
+#             elif type(df['PHASE'].values[i])==str and df['PHASE'].values[i].startswith('m'):
+#                 df['MT_STATUS'].values[i] = int(0)
 
 
 def add_calculated_displacement(df: pd.DataFrame) -> pd.DataFrame:
-    '''This function substracts the signal from the background (so that we get increasing displacement after each first point of the new pulse). It creates a new column in the df dataframe with the displacement values after each pulse. 
+    '''
+    .
+    This function substracts the signal from the background (so that we get increasing displacement after each first point of the new pulse). It creates a new column in the df dataframe with the displacement values after each pulse. 
 
     ---
     df:             dataframe with bead tracks
@@ -191,6 +161,7 @@ def add_calculated_displacement(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_flow_slope(df: pd.DataFrame) -> pd.DataFrame:
     '''
+    .
     This function checks out the bead tracks. It takes into account the last window*length of the OFF phase before the new period starts. It calculates the slopes where possible and adds them into the data frame.  
     ---
     df:             dataframe with bead tracks
