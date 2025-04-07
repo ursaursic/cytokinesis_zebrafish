@@ -81,7 +81,7 @@ def main(config_path):
             continue
 
         # Add information about magnet pulse status to the dataframe
-        magnet_info = df_general_info[['first_pulse (frame)', 't_on (frame)', 't_off (frame)']].values[idx]
+        magnet_info = df_general_info[['first_pulse (frame)', 'last_pulse (frame)', 't_on (frame)', 't_off (frame)']].values[idx]
         magnet_info = list(map(int, magnet_info))  # Convert magnet info to integer
         add_magnet_status(df, magnet_info)
 
@@ -102,6 +102,8 @@ def main(config_path):
         with pd.HDFStore(filepath_extended_df, mode='w') as store:
             store.put('df', df)
             store.get_storer('df').attrs.metadata = df.attrs['COMMENTS']
+        
+
 
 
 if __name__ == "__main__":

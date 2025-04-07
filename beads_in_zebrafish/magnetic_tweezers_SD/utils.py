@@ -8,6 +8,7 @@ import numpy as np
 import os
 import cv2
 from scipy.optimize import curve_fit, Bounds
+from scipy.signal import find_peaks
 import colorcet as cc
 from typing import Callable
 import matplotlib.pyplot as plt
@@ -35,7 +36,6 @@ window = 1/2 # the window for background subtraction
 
 def plot_tip(df_tracks: pd.DataFrame, tip_end: [int, int], save_img_to_path: str, pix_size: float) -> None:
     '''
-    .
     Plot where the tip is in relationship to all the tracks. Save the images for sanity check.
     '''
 
@@ -52,7 +52,6 @@ def plot_tip(df_tracks: pd.DataFrame, tip_end: [int, int], save_img_to_path: str
 
 def calculate_distance_from_tip(df: pd.DataFrame, tip: list, pix_size: float) -> None:
     '''
-    .
     Calculates distance from the tip end point (tip_point is in pixels) to bead and adds this to the dataframe df. The tracks POSITION_X and POSITION_Y are in um. 
     '''
     if len(tip) == 2:
@@ -61,12 +60,12 @@ def calculate_distance_from_tip(df: pd.DataFrame, tip: list, pix_size: float) ->
 
 def add_magnet_status(df: pd.DataFrame, magnet_info: list[int]) -> None:
     '''
-    .
     Add the information weather the magnemagnet is on or off. 
     '''
-    first_pulse, t_on, t_off = magnet_info
-    # number of pulses in total
-    N_pulses = np.max(df['FRAME'])//(t_on+t_off)
+    first_pulse, last_pulse, t_on, t_off = magnet_info
+    # number of pulses to take into account:
+    N_pulses = (last_pulse - first_pulse)//(t_on+t_off) + 1
+
     # Add info about the magnet into the df
     magnet_pulses = np.array([[first_pulse + j*(t_on+t_off) + i - 1 for i in range(0, t_on)] for j in range(N_pulses+1)])
     
@@ -78,7 +77,6 @@ def add_magnet_status(df: pd.DataFrame, magnet_info: list[int]) -> None:
 
 def calculate_force(df: pd.DataFrame, calibration: int | str):
     '''
-    .
     Calculates force at the distance of the bead, depending on the force calibration parameters (defined above).
     '''
     a1, k1, a2, k2 = force_calibration_params[calibration]
@@ -86,26 +84,8 @@ def calculate_force(df: pd.DataFrame, calibration: int | str):
     df.loc[df['MAGNET_STATUS']==0, 'FORCE [pN]'] = 0
 
 
-# def add_MT_status(df: pd.DataFrame, MT_info: np.ndarray | str):
-#     '''
-#     Add information about the microtubules into the data frame.
-#     '''
-#     df['MT_STATUS'] = np.nan
-#     if len(MT_info) > 1:
-#         for (i, phase) in enumerate(['m_phase_1', 'i_phase_1', 'm_phase_2', 'i_phase_2']):
-#             if (MT_info[i*2] != 'na') & (MT_info[i*2+1] != 'na'):
-#                 df.loc[df['FRAME'].isin(range(int(MT_info[i*2]), int(MT_info[i*2+1]))), 'PHASE'] = phase
-        
-#         for i in range(len(df)):
-#             if type(df['PHASE'].values[i])==str and df['PHASE'].values[i].startswith('i'):
-#                 df['MT_STATUS'].values[i] = int(1)
-#             elif type(df['PHASE'].values[i])==str and df['PHASE'].values[i].startswith('m'):
-#                 df['MT_STATUS'].values[i] = int(0)
-
-
 def add_calculated_displacement(df: pd.DataFrame) -> pd.DataFrame:
     '''
-    .
     This function substracts the signal from the background (so that we get increasing displacement after each first point of the new pulse). It creates a new column in the df dataframe with the displacement values after each pulse. 
 
     ---
@@ -161,7 +141,6 @@ def add_calculated_displacement(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_flow_slope(df: pd.DataFrame) -> pd.DataFrame:
     '''
-    .
     This function checks out the bead tracks. It takes into account the last window*length of the OFF phase before the new period starts. It calculates the slopes where possible and adds them into the data frame.  
     ---
     df:             dataframe with bead tracks
@@ -180,57 +159,33 @@ def add_flow_slope(df: pd.DataFrame) -> pd.DataFrame:
             xdata = track.loc[track['PULSE_NUMBER']==pulse, 'FRAME'].values[-int(window*magnet_off_length):]
             ydata = track.loc[track['PULSE_NUMBER']==pulse, 'DISTANCE [um]'].values[-int(window*magnet_off_length):]
             f = lambda x, *p: p[0]*x + p[1]
-            popt, pcov = curve_fit(f, xdata, ydata, p0=[-0.1, 100], nan_policy='raise')
+            popt, pcov = curve_fit(f, xdata, ydata, p0=[-0.1, 100], nan_policy='omit')
             if (np.sqrt(pcov[1][1])/popt[1] < 1) & (np.sqrt(pcov[0][0])/popt[0] < 1) & (MSE(xdata, ydata, f, popt) < 0.5):
                 df.loc[(df["TRACK_ID"]==idx) & (track['PULSE_NUMBER']==pulse), ['CORRECTION_k', 'CORRECTION_k_ERR', 'CORRECTION_N', 'CORRECTION_N_ERR']] = [popt[0], pcov[0][0], popt[1], pcov[1][1]]
     return df
 
 
+def MSE(data_x: np.ndarray, data_y: np.ndarray, f: Callable, fit_popt: np.ndarray) -> float:
+    data_fit = f(data_x, *fit_popt)
+    mse = 1/len(data_y)*sum([data_y[i]**2-data_fit[i]**2 for i in range(len(data_y))])
+    return mse
+
+
 ################################################################################
-# FUNCTIONS FOR calculate_viscoelastic_responce
+# FUNCTIONS FOR CALCULATING MATERIAL PROPERTIES
 ################################################################################
 
-
-def fit_jeffreys_model(data_x: np.ndarray, data_y: np.ndarray, phase: str) -> np.ndarray:
-    '''
-    fit Jeffrey's rising and relaxing phases to data. Jefferey's model is composed of a sping with an elastic constant k, parralely bound to a dashpod with viscosity eta_1. This component is also sequentially bound to another dashpod with viscosity eta_2. The model is fitted with a "rising pahse", where we assume a constant force at each time step and a "relaxing phase" where the force is 0, but the system is relaxing after the force was turned off. 
-          |--- dashpod (eta_1)--|
-    |-----|                     |---- dashpod (eta 2) -----> F
-          |--- spring (k) ------|
-    '''
-    if phase not in ['rising', 'relaxing']:
-        print('Phase not valid. Options: \'rising\' or \'relaxing\'.')
-
-    data_x_fit = np.linspace(data_x[0], data_x[-1], 100)
+def calculate_model_independedt_params(pulse: pd.DataFrame, avg_force: float) -> tuple:
+    rising_phase = pulse.loc[pulse['MAGNET_STATUS']==1, 'CORRECTED DISPLACEMENT [um]'].values
+    relaxing_phase = pulse.loc[pulse['MAGNET_STATUS']==0, 'CORRECTED DISPLACEMENT [um]'].values
     
-    try:
-        if phase == 'rising':
-            bounds = Bounds([0, 0.05, 0.05], [np.inf, np.inf, np.inf]) # k, eta_1, eta_2
-            popt, pcov = curve_fit(jeffreys_model_rising, data_x, data_y, bounds=bounds, p0=[100, 1000, 10000])
-            data_y_fit = jeffreys_model_rising(data_x_fit, *popt)
-        elif phase == 'relaxing':
-            bounds = Bounds([0, 0], [np.inf, np.inf]) # a, tau_r
-            popt, pcov = curve_fit(jeffreys_model_relaxing, data_x, data_y, bounds=bounds, p0=[0.1, 10])
-            data_y_fit = jeffreys_model_relaxing(data_x_fit, *popt)
+    rising_dif = rising_phase[-1]-rising_phase[0]
+    relaxing_dif = relaxing_phase[-1]-relaxing_phase[0]
 
-        
-        return data_x_fit, data_y_fit, popt, pcov
-    except:
-        print("The fit was not sucessful.")
-        return [(False,),  (False,),  (False,),  (False,)]
+    rising_dif_norm = rising_dif/avg_force
+    rising_dif_norm_inverse = 1/rising_dif_norm
 
-
-def fit_sufficient(popt, pcov) -> bool:
-    '''
-    Test if the fit is good enough. Te cut off is when error of any parameter is larger than the value of the parameter. 
-    '''
-    perr = np.sqrt(np.diag(pcov))
-    for i in range(len(popt)):
-        if perr[i] == 0:
-            return False
-        elif popt[i]/perr[i] < 1: # retative error should not be larger than 1. 
-            return False
-    return True
+    return rising_dif, relaxing_dif, rising_dif_norm, rising_dif_norm_inverse
 
 
 def r_squared(ydata, yfit):
@@ -240,10 +195,134 @@ def r_squared(ydata, yfit):
     return R_sq
 
 
-def MSE(data_x: np.ndarray, data_y: np.ndarray, f: Callable, fit_popt: np.ndarray) -> float:
-    data_fit = f(data_x, *fit_popt)
-    mse = 1/len(data_y)*sum([data_y[i]**2-data_fit[i]**2 for i in range(len(data_y))])
-    return mse
+def jeff_full(t, k, eta_1, eta_2, F_0, t_1) -> np.ndarray:
+    '''
+    fit Jeffrey's rising and relaxing phases to data. Jefferey's model is composed of a sping with an elastic constant k, parralely bound to a dashpod with viscosity eta_1. This component is also sequentially bound to another dashpod with viscosity eta_2. The model is fitted with a "rising pahse", where we assume a constant force at each time step and a "relaxing phase" where the force is 0, but the system is relaxing after the force was turned off. 
+          |--- dashpod (eta_1)--|
+    |-----|                     |---- dashpod (eta 2) -----> F
+          |--- spring (k) ------|
+    '''
+    a = 1 - 1 / ((eta_2 / (k * t_1)) * (1 - np.exp(- k* t_1 / eta_1)) + 1) 
+
+    # rising
+    x_1 = F_0 / k * (1 - np.exp(-k * t / eta_1)) + F_0 * t / eta_2
+
+    # relaxing
+    x_2 = (F_0 / k * (1 - np.exp(-k * t_1 / eta_1)) + F_0 * t_1 / eta_2) * (a * np.exp(-(t-t_1) * k / eta_1) + (1-a))
+
+    # combined
+    x = list(x_1[:len(t[t<t_1])]) + list(x_2[len(t[t<t_1]):])
+    return x
+
+
+def KV_full(t, k, eta, F_0, t_1) -> np.ndarray:
+    '''
+    fit Kelvin-Voigt rising and relaxing phases to data. 
+          |--- dashpod (eta)----|
+    |-----|                     | -----> F
+          |--- spring (k) ------|
+    '''
+
+    # rising
+    x_1 = F_0 / k * (1 - np.exp(-k * t / eta))
+
+    # relaxing
+    x_2 = F_0 / k * (1 - np.exp(-k * t_1 / eta)) * (np.exp(-(t-t_1) * k / eta))
+
+    # combined
+    x = list(x_1[:len(t[t<t_1])]) + list(x_2[len(t[t<t_1]):])
+    return x
+
+
+def get_fit_jeff_full(xfit, xdata, ydata, F_0, t_1, sigma=None) -> np.ndarray:
+    jeff_full_for_fit = lambda t, k, eta_1, eta_2: jeff_full(t, k, eta_1, eta_2, F_0, t_1)
+
+    popt, pcov = curve_fit(jeff_full_for_fit, xdata, ydata, p0=[30, 40, 100], bounds=([0.5, 0.5, 0.5], [10e5, 10e5, 10e5]), sigma=sigma, nan_policy='omit') # lower bounds to prevent exponent to overflow
+
+    yfit = jeff_full_for_fit(xfit, *popt)
+
+    return yfit, popt, pcov
+
+
+def get_fit_KV_full(xfit, xdata, ydata, F_0, t_1, sigma=None) -> np.ndarray:
+    KV_full_for_fit = lambda t, k, eta: KV_full(t, k, eta, F_0, t_1)
+
+    popt, pcov = curve_fit(KV_full_for_fit, xdata, ydata, p0=[100, 100], bounds=([0.5, 0.5], [10e5, 10e5]), sigma=sigma, nan_policy='omit')  # lower bounds to prevent exponent to overflow
+
+    yfit = KV_full_for_fit(xfit, *popt)
+
+    return yfit, popt, pcov
+
+
+def calculate_KV_fit_params(time_data, displacement_full, avg_force, t_1, dt, sigma, plot=False):
+    time_fit = np.linspace(0, len(time_data) * dt, 100)
+
+    displacement_fit_KV, popt_KV, pcov_KV = get_fit_KV_full(time_fit, time_data, displacement_full, avg_force, t_1, sigma)
+
+    params = ['k', 'eta']
+
+    k_KV, eta_KV = popt_KV
+    k_KV_err, eta_KV_err = [np.sqrt(pcov_KV[0][0]), np.sqrt(pcov_KV[1][1])]
+    yfit_KV = KV_full(np.array(time_data), k_KV, eta_KV, avg_force, t_1)
+    R_sq_KV = r_squared(np.array(displacement_full), np.array(yfit_KV))
+
+    text_KV = ''
+    for i in range(len(popt_KV)):
+        text_KV += f"{params[i]}: {round(popt_KV[i], 2)} +/- {round(np.sqrt(pcov_KV[i][i]), 2)}\n"
+    text_KV += f"$R^2$: {round(R_sq_KV, 2)}\n"
+    
+    if plot:
+        plt.plot(time_fit, displacement_fit_KV, 'r--', label = f'KV fit: {text_KV}')
+
+    return k_KV, eta_KV, k_KV_err, eta_KV_err, R_sq_KV
+
+
+def calculate_Jeff_fit_params(time_data, displacement_full, avg_force, t_1, dt, sigma, plot=False):
+    params = ['k', 'eta_1', 'eta_2']
+    
+    # find fit parameters
+    time_fit = np.linspace(0, len(time_data) * dt, 100)
+    displacement_fit, popt, pcov = get_fit_jeff_full(time_fit, time_data, displacement_full, avg_force, t_1, sigma)
+
+    k, eta_1, eta_2 = popt
+    k_err, eta_1_err, eta_2_err = [np.sqrt(pcov[0][0]), np.sqrt(pcov[1][1]), np.sqrt(pcov[2][2])]
+    yfit = jeff_full(np.array(time_data), k, eta_1, eta_2, avg_force, t_1)
+    R_sq = r_squared(np.array(displacement_full), np.array(yfit))
+
+    text = ''
+    for i in range(len(popt)):
+        text += f"{params[i]}: {round(popt[i], 2)} +/- {round(np.sqrt(pcov[i][i]), 2)}\n"
+    text += f"$R^2$: {round(R_sq, 2)}\n"
+
+    if plot:
+        plt.plot(time_fit, displacement_fit, 'k--', label=f'fit: {text}')
+
+    return k, eta_1, eta_2, k_err, eta_1_err, eta_2_err, R_sq
+
+
+def check_differentiable(time_data, k, eta_1, eta_2, avg_force, t_1, dt, plot=False):
+    'Check if fit is (practically) differentiable. Plot if needed.'
+    fit_divisible = True
+    time_fit = np.linspace(0, len(time_data) * dt, 100)
+    displacement_fit = jeff_full(time_fit, k, eta_1, eta_2, avg_force, t_1)
+
+    derivative = np.diff(displacement_fit)
+    peaks, properties = find_peaks(-derivative, prominence=0.2, width=0.1)
+    if len(peaks) > 0:
+        if properties['widths'][0] < 1:
+            if plot:
+                plt.plot(time_fit[peaks], derivative[peaks], 'o', color='green', label = 'peaks')
+            fit_divisible = False
+
+    if plot:
+        plt.plot(time_fit[:-1], derivative, 'r-', label = 'derivative')
+        plt.title('Check if the fit is divisible')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Derivative of displacement')
+        plt.show()
+
+    return fit_divisible
+
 
 
 ################################################################################
@@ -294,6 +373,7 @@ def plot_trajectories(filename: str, df: pd.DataFrame, comments: str, save_to_fi
     else:
         bokeh.io.export_png(p, filename=f"{save_to_filepath}")
 
+
 def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_filepath: str) -> None:
     if len(df['CORRECTED DISPLACEMENT [um]'].dropna()) < 10:
         return None
@@ -309,7 +389,6 @@ def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_fi
     colors = cc.b_glasbey_category10
     
     dt = np.average([df['POSITION_T'].values[i]/df['FRAME'].values[i] for i in range(len(df)) if df['POSITION_T'].values[i] != 0])
-    # print(f'Sanity check: dt = {dt}')
 
     for color, (track, g) in zip(colors, df.groupby('TRACK_ID')):
         if 'CORRECTED DISPLACEMENT [um]' in df.columns:
@@ -327,173 +406,3 @@ def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_fi
         bokeh.io.show(p)
     else:
         bokeh.io.export_png(p, filename=f"{save_to_filepath}")
-
-
-def calculate_displacement_force_ratio(track: pd.DataFrame, pulse: int) -> list[np.ndarray, np.ndarray]:
-    distance_magnet_on = track.loc[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==1), 'DISTANCE [um]'].values
-    distance_magnet_off = track.loc[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==0), 'DISTANCE [um]'].values
-    force_magnet_on = track.loc[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==1), 'FORCE [pN]'].values
-
-    displacement_force_magnet_on = (distance_magnet_on[0] - distance_magnet_on)/force_magnet_on
-    displacement_force_magnet_off = (distance_magnet_on[0]-distance_magnet_off)/np.average(force_magnet_on)
-    # displacement_force_magnet_off /=displacement_force_magnet_off[0]  # normalization ? 
-    return displacement_force_magnet_on, displacement_force_magnet_off
-
-
-def set_time_data(track: pd.DataFrame, pulse: int, dt: float) -> list[np.ndarray, np.ndarray]:
-    time_on = dt*track.loc[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==1), 'FRAME'].values
-    time_off = dt*track.loc[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==0), 'FRAME'].values
-
-    time_off -= time_on[0]
-    time_on -= time_on[0]
-    return time_on, time_off
-
-
-def add_data_to_plot(p, time_on, time_off, displacement_force_magnet_on, displacement_force_magnet_off, MT_status) -> None:
-    if use_matplotlib:
-        plt.plot(time_on, displacement_force_magnet_on, 'o-', color ='green', alpha=0.5)
-        plt.plot(time_off, displacement_force_magnet_off, 'o-', color='gray', alpha=0.5)
-        plt.ylim(-0.05, 0.75)
-
-    else:
-        # plot data
-        p.line(x=time_on, y=displacement_force_magnet_on, alpha=0.5, color='green', legend_label='Magnet ON')
-        p.line(x=time_off, y=displacement_force_magnet_off, alpha=0.5, legend_label='Magnet OFF')
-        p.circle(x=time_on, y=displacement_force_magnet_on, alpha=0.5, color='green', legend_label='Magnet ON')
-        p.circle(x=time_off, y=displacement_force_magnet_off, alpha=0.5, legend_label='Magnet OFF')
-
-        if MT_status == 1 or MT_status == 'y':
-            MT_label = 'MT'
-        elif MT_status == 0 or MT_status == 'n':
-            MT_label = 'noMT'
-        elif MT_status == 'CHX':
-            MT_label = 'CHX'
-        else:
-            MT_label = '?'
-        MT_label_on = bokeh.models.Label(x=time_on[-1], y=displacement_force_magnet_on[-1], text_alpha=0.5, text=MT_label)
-        MT_label_off = bokeh.models.Label(x=time_off[-1], y=displacement_force_magnet_off[-1], text_alpha=0.5, text=MT_label)
-        
-        p.add_layout(MT_label_on)
-        p.add_layout(MT_label_off)
-
-
-def save_plot(p, filename, track_idx, save_to_filepath):
-    p.legend.click_policy = 'hide'
-
-    if save_to_filepath=='ipynb':
-        bokeh.io.show(p)
-    else:
-        if not os.path.isdir(f"{save_to_filepath}/dispacement_force_curves/"):
-            os.mkdir(f"{save_to_filepath}/dispacement_force_curves/")
-        bokeh.io.export_png(p, filename=f"{save_to_filepath}/dispacement_force_curves/{filename}_{track_idx}.png")
-
-
-def calculate_fit_parameters(filename: str, df: pd.DataFrame, comments: str, df_results: pd.DataFrame, save_plot_to_filepath: str) -> pd.DataFrame:
-    dt = np.average([df['POSITION_T'].values[i]/df['FRAME'].values[i] for i in range(len(df)) if df['POSITION_T'].values[i] != 0])
-    
-    idx = 0
-    for track_idx in df['TRACK_ID'].unique():
-        track = df[df["TRACK_ID"]==track_idx]
-        period_length = max([len(track[track["PULSE_NUMBER"]==pulse]['FRAME'].values) for pulse in track['PULSE_NUMBER'].unique()])
-        if len(df[df['TRACK_ID']==track_idx]) < 2*period_length: 
-            continue
-        
-        if save_plot_to_filepath:
-            p = plot_viscoelastic_responce(filename, df, comments)
-        
-        for pulse in track['PULSE_NUMBER'].unique():
-            if len(track[track['PULSE_NUMBER']==pulse]) < period_length or len(track[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==1)]) < 5:
-                continue
-
-            # Define time and displacement
-            time_on, time_off = set_time_data(track, pulse, dt)
-            time_on = list(time_on) + [time_off[0]]
-            displacement_force_magnet_on, displacement_force_magnet_off = calculate_displacement_force_ratio(track, pulse)
-            displacement_force_magnet_on = list(displacement_force_magnet_on) + [displacement_force_magnet_off[0]]
-            MT_status = track.loc[track['PULSE_NUMBER']==pulse, 'MT_STATUS'].values[0]
-            if save_plot_to_filepath:
-                add_data_to_plot(p, time_on, time_off, displacement_force_magnet_on, displacement_force_magnet_off, MT_status)
-
-            if not use_matplotlib:
-                # Calculate fit
-                data_x_rising_fit, data_y_rising_fit, popt_rising, pcov_rising = fit_jeffreys_model(time_on, displacement_force_magnet_on, 'rising')
-                data_x_relaxing_fit, data_y_relaxing_fit, popt_relaxing, pcov_relaxing = fit_jeffreys_model(time_off, displacement_force_magnet_off, 'relaxing')
-
-                # Add fit parameters to the result dataframe
-                new_line = {'FILENAME': filename, 
-                            'TRACK_IDX': track_idx, 
-                            'PULSE_NUMBER': pulse, 
-                            'MT_STATUS': MT_status,
-                            'VISCOEL_PARAMS_RISING_k': np.nan,
-                            'VISCOEL_PARAMS_RISING_eta1': np.nan,
-                            'VISCOEL_PARAMS_RISING_eta2': np.nan,
-                            'VISCOEL_PARAMS_RELAXING_a': np.nan,
-                            'VISCOEL_PARAMS_RELAXING_tau': np.nan,
-                            'COMMENTS': str(comments)
-                            }
-
-                flag = [False, False]
-                if all(popt_rising) and fit_sufficient(popt_rising, pcov_rising) and MSE(time_on, displacement_force_magnet_on, jeffreys_model_rising, popt_rising) < 0.0005:
-                    new_line['VISCOEL_PARAMS_RISING_k'] = popt_rising[0]
-                    new_line['VISCOEL_PARAMS_RISING_eta1'] = popt_rising[1]
-                    new_line['VISCOEL_PARAMS_RISING_eta2'] = popt_rising[2]
-                    if save_plot_to_filepath and not use_matplotlib:
-                        add_fit_to_plot(p, data_x_rising_fit, data_y_rising_fit, 'Magnet ON')
-                    flag[0] = True
-
-                if all(popt_relaxing) and fit_sufficient(popt_relaxing, pcov_relaxing) and MSE(time_off, displacement_force_magnet_off, jeffreys_model_relaxing, popt_relaxing) < 0.0005:  
-                    new_line['VISCOEL_PARAMS_RELAXING_a'] = popt_relaxing[0]
-                    new_line['VISCOEL_PARAMS_RELAXING_tau'] = popt_relaxing[1]
-                    if save_plot_to_filepath  and not use_matplotlib:
-                        add_fit_to_plot(p, data_x_relaxing_fit, data_y_relaxing_fit, 'Magnet OFF')
-                    flag[1] = True
-
-                if any(flag):
-                    df_results = pd.concat([df_results,pd.DataFrame(new_line, index=[idx])])
-                    idx += 1
-
-        if save_plot_to_filepath  and not use_matplotlib:
-            save_plot(p, filename, track_idx, save_plot_to_filepath)
-        if use_matplotlib:
-            plt.savefig(f"{save_plot_to_filepath}/dispacement_force_curves/{filename}_{track_idx}.png", dpi=300)
-    return df_results
-
-
-
-def jeff_full(t, k, eta_1, eta_2, F_0, t_1) -> np.ndarray:
-    '''
-    fit Jeffrey's rising and relaxing phases to data. Jefferey's model is composed of a sping with an elastic constant k, parralely bound to a dashpod with viscosity eta_1. This component is also sequentially bound to another dashpod with viscosity eta_2. The model is fitted with a "rising pahse", where we assume a constant force at each time step and a "relaxing phase" where the force is 0, but the system is relaxing after the force was turned off. 
-          |--- dashpod (eta_1)--|
-    |-----|                     |---- dashpod (eta 2) -----> F
-          |--- spring (k) ------|
-    '''
-    a = 1 - 1 / ((eta_2 / (k * t_1)) * (1 - np.exp(- k* t_1 / eta_1)) + 1) 
-
-    # rising
-    x_1 = F_0 / k * (1 - np.exp(-k * t / eta_1)) + F_0 * t / eta_2
-
-    # relaxing
-    x_2 = (F_0 / k * (1 - np.exp(-k * t_1 / eta_1)) + F_0 * t_1 / eta_2) * (a * np.exp(-(t-t_1) * k / eta_1) + (1-a))
-
-    # combined
-    x = list(x_1[:len(t[t<t_1])]) + list(x_2[len(t[t<t_1]):])
-    return x
-
-
-def KV_full(t, k, eta, F_0, t_1) -> np.ndarray:
-    '''
-    fit Kelvin-Voigt rising and relaxing phases to data. 
-          |--- dashpod (eta)----|
-    |-----|                     | -----> F
-          |--- spring (k) ------|
-    '''
-
-    # rising
-    x_1 = F_0 / k * (1 - np.exp(-k * t / eta))
-
-    # relaxing
-    x_2 = F_0 / k * (1 - np.exp(-k * t_1 / eta)) * (np.exp(-(t-t_1) * k / eta))
-
-    # combined
-    x = list(x_1[:len(t[t<t_1])]) + list(x_2[len(t[t<t_1]):])
-    return x
