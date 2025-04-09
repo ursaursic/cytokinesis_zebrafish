@@ -15,10 +15,6 @@ import matplotlib.pyplot as plt
 
 use_matplotlib = True
 
-import bokeh.io
-import bokeh.plotting
-import bokeh.models
-
 #######
 # define force calibration parameters
 #######
@@ -159,9 +155,9 @@ def add_flow_slope(df: pd.DataFrame) -> pd.DataFrame:
             xdata = track.loc[track['PULSE_NUMBER']==pulse, 'FRAME'].values[-int(window*magnet_off_length):]
             ydata = track.loc[track['PULSE_NUMBER']==pulse, 'DISTANCE [um]'].values[-int(window*magnet_off_length):]
             f = lambda x, *p: p[0]*x + p[1]
-            popt, pcov = curve_fit(f, xdata, ydata, p0=[-0.1, 100], nan_policy='omit')
-            if (np.sqrt(pcov[1][1])/popt[1] < 1) & (np.sqrt(pcov[0][0])/popt[0] < 1) & (MSE(xdata, ydata, f, popt) < 0.5):
-                df.loc[(df["TRACK_ID"]==idx) & (track['PULSE_NUMBER']==pulse), ['CORRECTION_k', 'CORRECTION_k_ERR', 'CORRECTION_N', 'CORRECTION_N_ERR']] = [popt[0], pcov[0][0], popt[1], pcov[1][1]]
+            popt, pcov = curve_fit(f, xdata, ydata, p0=[0, 10])
+            # if (np.sqrt(pcov[1][1])/popt[1] < 1) & (np.sqrt(pcov[0][0])/popt[0] < 1) & (MSE(xdata, ydata, f, popt) < 0.5):
+            df.loc[(df["TRACK_ID"]==idx) & (track['PULSE_NUMBER']==pulse), ['CORRECTION_k', 'CORRECTION_k_ERR', 'CORRECTION_N', 'CORRECTION_N_ERR']] = [popt[0], pcov[0][0], popt[1], pcov[1][1]]
     return df
 
 
@@ -329,67 +325,87 @@ def check_differentiable(time_data, k, eta_1, eta_2, avg_force, t_1, dt, plot=Fa
 # FUNCTIONS FOR PLOTTING
 ################################################################################
 
-def plot_trajectories(filename: str, df: pd.DataFrame, comments: str, save_to_filepath: str, show_background_fit=False) -> None:
+def plot_trajectories(filename: str, df: pd.DataFrame, comments: str, save_to_filepath: str='ipynb', show_background_fit=False):
     if len(df) < 10:
         return None
-    p = bokeh.plotting.figure(
-    frame_width = 600,
-    frame_height = 400,
-    x_axis_label='Frame',
-    y_axis_label='Distance from tip (um)',
-    title=f'{filename}\ncomments: {comments}'
-    )
 
-    p.add_layout(bokeh.models.Legend(), 'right')
+    fig, ax = plt.subplots(figsize=(8, 5))
 
-    source_on = bokeh.models.ColumnDataSource(df[df["MAGNET_STATUS"]==1])
-    source_off = bokeh.models.ColumnDataSource(df[df["MAGNET_STATUS"]==0])
-    p.circle(source=source_on, x='FRAME', y='DISTANCE [um]', alpha=0.5, color='green', legend_label='Magnet ON')
-    p.circle(source=source_off, x='FRAME', y='DISTANCE [um]', alpha=0.5, legend_label='Magnet OFF')
+    ax.set_title(f'{filename}\ncomments: {comments}')
+    ax.set_xlabel('Frame')
+    ax.set_ylabel('Distance from tip (um)')
+
+    # Scatter plot for Magnet ON and OFF
+    df_on = df[df["MAGNET_STATUS"] == 1]
+    df_off = df[df["MAGNET_STATUS"] == 0]
+
+    ax.scatter(df_on['FRAME'], df_on['DISTANCE [um]'], alpha=0.5, color='green', s=5, label='Magnet ON')
+    ax.scatter(df_off['FRAME'], df_off['DISTANCE [um]'], alpha=0.5, color='blue', s=5, label='Magnet OFF')
 
     if show_background_fit:
         for idx in df['TRACK_ID'].unique():
             track = df[df["TRACK_ID"] == idx]
-            period_length = max([len(track[track["PULSE_NUMBER"]==pulse]['FRAME'].values) for pulse in track['PULSE_NUMBER'].unique()])
+            pulses = track['PULSE_NUMBER'].unique()
+            period_length = max([
+                len(track[track["PULSE_NUMBER"] == pulse]['FRAME'].values) for pulse in pulses
+            ])
 
-            for pulse in track["PULSE_NUMBER"].unique():
-                if len(track[track["PULSE_NUMBER"]==pulse]) < 1/4*period_length:
+            for pulse in pulses:
+                pulse_track = track[track["PULSE_NUMBER"] == pulse]
+                if len(pulse_track) < 1/4 * period_length:
                     continue
-                
-                magnet_off_length = len(track.loc[(track['PULSE_NUMBER']==pulse)&(track['MAGNET_STATUS']==0), 'FRAME'])
-                xdata = track[track["PULSE_NUMBER"]==pulse]["FRAME"].values[-magnet_off_length:]
-                ydata = track[track["PULSE_NUMBER"]==pulse]["DISTANCE [um]"].values[-magnet_off_length:]
-                popt = track.loc[track["PULSE_NUMBER"]==pulse,  ["CORRECTION_k", "CORRECTION_N"]].values[0]
-                if popt.size != 0 and not np.isnan(popt).any():
-                    f = lambda x, k, N: k*x + N  
-                    p.circle(x=xdata[-int(window*magnet_off_length):], y=ydata[-int(window*magnet_off_length):], alpha=0.3, size=2, color='red', legend_label='Data for drift fit')
-                    x_fit = np.linspace(min(xdata), max(xdata), 30)
-                    y_fit = f(x_fit, *popt)
-                    p.line(x=x_fit, y=y_fit, alpha=0.3, line_width=2, color='black', legend_label='Drift fit')
 
-    p.legend.click_policy = 'hide'
-    if save_to_filepath=='ipynb':
-        bokeh.io.show(p)
+                magnet_off = pulse_track[pulse_track["MAGNET_STATUS"] == 0]
+                magnet_off_length = len(magnet_off)
+                if magnet_off_length == 0:
+                    continue
+
+                xdata = pulse_track["FRAME"].values[-magnet_off_length:]
+                ydata = pulse_track["DISTANCE [um]"].values[-magnet_off_length:]
+                popt = pulse_track[["CORRECTION_k", "CORRECTION_N"]].values[0]
+                if popt.size != 0 and not np.isnan(popt).any():
+                    k, N = popt
+                    f = lambda x: k * x + N
+
+                    # Plot data used for fitting
+                    xdata_window = xdata[-int(window * magnet_off_length):]
+                    ydata_window = ydata[-int(window * magnet_off_length):]
+                    ax.scatter(xdata_window, ydata_window, alpha=0.3, s=5, color='red', label='Data for drift fit')
+
+                    # Plot fitted line
+                    x_fit = np.linspace(min(xdata), max(xdata), 30)
+                    y_fit = f(x_fit)
+                    ax.plot(x_fit, y_fit, '--', alpha=0.8, linewidth=1, color='black', label='Drift fit')
+
+    # Avoid duplicate legend entries
+    handles, labels = ax.get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    ax.legend(unique.values(), unique.keys(), loc='upper right')
+
+    plt.tight_layout()
+    if save_to_filepath == 'ipynb':
+        plt.show()
     else:
-        bokeh.io.export_png(p, filename=f"{save_to_filepath}")
+        plt.savefig(save_to_filepath, dpi=300)
+        plt.close()
 
 
 def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_filepath: str) -> None:
     if len(df['CORRECTED DISPLACEMENT [um]'].dropna()) < 10:
         return None
-    p = bokeh.plotting.figure(
-            frame_width = 600,
-            frame_height = 400,
-            x_axis_label='Time (s)',
-            y_axis_label='Displacement (um)',
-            title=f'{filename}\ncomments: {comments}'
-            )
-    
-    p.add_layout(bokeh.models.Legend(), 'right')
-    colors = cc.b_glasbey_category10
-    
-    dt = np.average([df['POSITION_T'].values[i]/df['FRAME'].values[i] for i in range(len(df)) if df['POSITION_T'].values[i] != 0])
 
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.set_title(f'{filename}\ncomments: {comments}')
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Displacement (um)')
+
+    # Estimate time step dt
+    dt = np.average([
+        df['POSITION_T'].values[i] / df['FRAME'].values[i]
+        for i in range(len(df)) if df['POSITION_T'].values[i] != 0
+    ])
+
+    colors = cc.b_glasbey_category10
     for color, (track, g) in zip(colors, df.groupby('TRACK_ID')):
         if 'CORRECTED DISPLACEMENT [um]' in df.columns:
             g = g.dropna(subset=['CORRECTED DISPLACEMENT [um]'])
@@ -398,11 +414,19 @@ def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_fi
             g = g.dropna(subset=['DISPLACEMENT [um]'])
             displacement = g['DISPLACEMENT [um]']
 
-        time = g['FRAME']*dt
-        if len(time)>10:
-            p.circle(x=time, y=displacement, alpha=0.5, color=color, legend_label=f'{track}')
-            p.legend.click_policy = 'hide'
-    if save_to_filepath=='ipynb':
-        bokeh.io.show(p)
+        time = g['FRAME'] * dt
+
+        if len(time) > 10:
+            ax.plot(time, displacement, '.-', markersize=3, alpha=0.5, color=color, label=f'{track}')
+
+    # Avoid duplicate legend entries
+    handles, labels = ax.get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    ax.legend(unique.values(), unique.keys(), loc='right', fontsize='small')
+
+    plt.tight_layout()
+    if save_to_filepath == 'ipynb':
+        plt.show()
     else:
-        bokeh.io.export_png(p, filename=f"{save_to_filepath}")
+        plt.savefig(save_to_filepath, dpi=300)
+        plt.close()
