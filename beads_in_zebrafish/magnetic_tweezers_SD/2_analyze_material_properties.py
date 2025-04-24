@@ -101,11 +101,13 @@ def main(config_path):
                     plt.ylabel('displacement (um)')
                     plt.title(f'{filename.split("_")[0]} {filename.split("_")[1][0:9]}, track_ID: {track_id}, MT: {pulse["MT_STATUS"].values[0]}, force: {int(avg_force)} pN, relax_too_much: {relax_too_much}')
                     plt.legend()
-                    plt.xlim(left=0)
-                    plt.ylim(bottom=0)
+                    # plt.xlim(left=0)
+                    # plt.ylim(bottom=0)
+                    plt.yscale('log')
+                    plt.xscale('log')
                     if not os.path.exists(dir_plots + f'/all_fits/'):
                         os.makedirs(dir_plots + f'/all_fits/')
-                    plt.savefig(dir_plots + f'/all_fits/Jeff_fit_{filename.split("_")[0]}_{filename.split("_")[1][0:9]}_track_ID_{track_id}_pulse_n_{pulse_n}.png', dpi=300)
+                    plt.savefig(dir_plots + f'/all_fits/Jeff_fit_{filename.split("_")[0]}_{filename.split("_")[1][0:9]}_track_ID_{track_id}_pulse_n_{pulse_n}_loglog.png', dpi=300)
                     plt.close()
 
                 fit_divisible = check_differentiable(time_data, k, eta_1, eta_2, avg_force, t_1, dt)
@@ -113,7 +115,8 @@ def main(config_path):
                 # include model independent analysis
                 rising_dif, relaxing_dif, rising_dif_norm, rising_dif_norm_inverse = calculate_model_independedt_params(pulse, avg_force)
 
-                new_line = {'EMBRYO': [filename[:18].replace('_', '')], 
+                new_line = {'EXPERIMENT': [filename[:18].replace('_', '')], 
+                            'EMBRYO': [filename[:15].replace('_', '')],
                             'TRACK_ID': track_id, 
                             'PULSE_NUMBER': pulse_n, 
                             'MT_STATUS': pulse['MT_STATUS'].unique(), 
@@ -146,7 +149,8 @@ def main(config_path):
     df_results['tau_r'] = df_results['eta_1']/(2* df_results['k'])
 
     # calculate a
-    df_results['a'] = 1 - 1 / ((df_results['eta_2'] / (df_results['k'] * t_1)) * (1- np.exp(- df_results['k']* t_1 / df_results['eta_1'])) +1)
+    df_results['a'] = 1 - 1 / ((df_results['eta_2'] / (df_results['k'] * df_results['t_1'])) * (1- np.exp(- df_results['k']* df_results['t_1'] / df_results['eta_1'])) +1)
+  
 
     df_results.to_csv(dir_plots + '/results/results_material_properies.csv')
 
