@@ -12,6 +12,7 @@ from scipy.signal import find_peaks
 import colorcet as cc
 from typing import Callable
 import matplotlib.pyplot as plt
+from scipy.stats.weightstats import ttest_ind
 
 use_matplotlib = True
 
@@ -21,6 +22,9 @@ use_matplotlib = True
 force_calibration_params = {
     1000: [1.74898497e+03, 2.76024353e-02, 1.26564525e+02, 5.08675459e-03],
     '1000': [1.74898497e+03, 2.76024353e-02, 1.26564525e+02, 5.08675459e-03],
+    '1000_PS': [3.48859792e+01, 1.69776141e-03, 6.03526520e+02, 1.38458207e-02], 
+    500: [3.48859792e+01, 1.69776141e-03, 6.03526520e+02, 1.38458207e-02], 
+    250: [3.48859792e+01, 1.69776141e-03, 6.03526520e+02, 1.38458207e-02]
 }
 
 
@@ -171,9 +175,10 @@ def MSE(data_x: np.ndarray, data_y: np.ndarray, f: Callable, fit_popt: np.ndarra
 # FUNCTIONS FOR CALCULATING MATERIAL PROPERTIES
 ################################################################################
 
-def calculate_model_independedt_params(pulse: pd.DataFrame, avg_force: float) -> tuple:
-    rising_phase = pulse.loc[pulse['MAGNET_STATUS']==1, 'CORRECTED DISPLACEMENT [um]'].values
-    relaxing_phase = pulse.loc[pulse['MAGNET_STATUS']==0, 'CORRECTED DISPLACEMENT [um]'].values
+def calculate_model_independedt_params(pulse: pd.DataFrame, avg_force: float, subtract_background: bool) -> tuple:
+    displacement_column = 'CORRECTED DISPLACEMENT [um]' if subtract_background else 'DISPLACEMENT [um]'
+    rising_phase = pulse.loc[pulse['MAGNET_STATUS']==1, displacement_column].values
+    relaxing_phase = pulse.loc[pulse['MAGNET_STATUS']==0, displacement_column].values
     
     rising_dif = rising_phase[-1]-rising_phase[0]
     relaxing_dif = relaxing_phase[-1]-relaxing_phase[0]
@@ -233,7 +238,7 @@ def KV_full(t, k, eta, F_0, t_1) -> np.ndarray:
 def get_fit_jeff_full(xfit, xdata, ydata, F_0, t_1, sigma=None) -> np.ndarray:
     jeff_full_for_fit = lambda t, k, eta_1, eta_2: jeff_full(t, k, eta_1, eta_2, F_0, t_1)
 
-    popt, pcov = curve_fit(jeff_full_for_fit, xdata, ydata, p0=[30, 40, 100], bounds=([0.5, 0.5, 0.5], [10e5, 10e5, 10e5]), sigma=sigma, nan_policy='omit') # lower bounds to prevent exponent to overflow
+    popt, pcov = curve_fit(jeff_full_for_fit, xdata, ydata, p0=[20, 20, 50], bounds=([0.5, 0.5, 0.5], [10e5, 10e5, 10e5]), sigma=sigma, nan_policy='omit') # lower bounds to prevent exponent to overflow
 
     yfit = jeff_full_for_fit(xfit, *popt)
 
@@ -243,7 +248,7 @@ def get_fit_jeff_full(xfit, xdata, ydata, F_0, t_1, sigma=None) -> np.ndarray:
 def get_fit_KV_full(xfit, xdata, ydata, F_0, t_1, sigma=None) -> np.ndarray:
     KV_full_for_fit = lambda t, k, eta: KV_full(t, k, eta, F_0, t_1)
 
-    popt, pcov = curve_fit(KV_full_for_fit, xdata, ydata, p0=[100, 100], bounds=([0.5, 0.5], [10e5, 10e5]), sigma=sigma, nan_policy='omit')  # lower bounds to prevent exponent to overflow
+    popt, pcov = curve_fit(KV_full_for_fit, xdata, ydata, p0=[30, 40], bounds=([0.5, 0.5], [10e5, 10e5]), sigma=sigma, nan_policy='omit')  # lower bounds to prevent exponent to overflow
 
     yfit = KV_full_for_fit(xfit, *popt)
 
@@ -273,27 +278,32 @@ def calculate_KV_fit_params(time_data, displacement_full, avg_force, t_1, dt, si
     return k_KV, eta_KV, k_KV_err, eta_KV_err, R_sq_KV
 
 
-def calculate_Jeff_fit_params(time_data, displacement_full, avg_force, t_1, dt, sigma, plot=False):
+def calculate_Jeff_fit_params(time_data, displacement_data, avg_force, t_1, dt, sigma, plot=False):
     params = ['k', 'eta_1', 'eta_2']
     
     # find fit parameters
-    time_fit = np.linspace(0, len(time_data) * dt, 100)
-    displacement_fit, popt, pcov = get_fit_jeff_full(time_fit, time_data, displacement_full, avg_force, t_1, sigma)
+    time_fit = np.linspace(0, time_data[-1], 100)
 
-    k, eta_1, eta_2 = popt
-    k_err, eta_1_err, eta_2_err = [np.sqrt(pcov[0][0]), np.sqrt(pcov[1][1]), np.sqrt(pcov[2][2])]
-    yfit = jeff_full(np.array(time_data), k, eta_1, eta_2, avg_force, t_1)
-    R_sq = r_squared(np.array(displacement_full), np.array(yfit))
+    try:
+        displacement_fit, popt, pcov = get_fit_jeff_full(time_fit, time_data, displacement_data, avg_force, t_1, sigma)
 
-    text = ''
-    for i in range(len(popt)):
-        text += f"{params[i]}: {round(popt[i], 2)} +/- {round(np.sqrt(pcov[i][i]), 2)}\n"
-    text += f"$R^2$: {round(R_sq, 2)}\n"
+        k, eta_1, eta_2 = popt
+        k_err, eta_1_err, eta_2_err = [np.sqrt(pcov[0][0]), np.sqrt(pcov[1][1]), np.sqrt(pcov[2][2])]
+        yfit = jeff_full(np.array(time_data), k, eta_1, eta_2, avg_force, t_1)
+        R_sq = r_squared(np.array(displacement_data), np.array(yfit))
 
-    if plot:
-        plt.plot(time_fit, displacement_fit, 'k--', label=f'fit: {text}')
+        text = ''
+        for i in range(len(popt)):
+            text += f"{params[i]}: {round(popt[i], 2)} +/- {round(np.sqrt(pcov[i][i]), 2)}\n"
+        text += f"$R^2$: {round(R_sq, 2)}\n"
 
-    return k, eta_1, eta_2, k_err, eta_1_err, eta_2_err, R_sq
+        if plot:
+            plt.plot(time_fit, displacement_fit, 'k--', label=f'fit: {text}')
+
+        return k, eta_1, eta_2, k_err, eta_1_err, eta_2_err, R_sq
+    except RuntimeError as e:
+        print(f"Error in fitting: {e}")
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
 
 def check_differentiable(time_data, k, eta_1, eta_2, avg_force, t_1, dt, plot=False):
@@ -390,8 +400,9 @@ def plot_trajectories(filename: str, df: pd.DataFrame, comments: str, save_to_fi
         plt.close()
 
 
-def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_filepath: str) -> None:
-    if len(df['CORRECTED DISPLACEMENT [um]'].dropna()) < 10:
+def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_filepath: str, subtract_background: bool, dt: float) -> None:
+    displacement_column = 'CORRECTED DISPLACEMENT [um]' if subtract_background else 'DISPLACEMENT [um]'
+    if len(df[displacement_column].dropna()) < 10:
         return None
 
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -399,20 +410,10 @@ def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_fi
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Displacement (um)')
 
-    # Estimate time step dt
-    dt = np.average([
-        df['POSITION_T'].values[i] / df['FRAME'].values[i]
-        for i in range(len(df)) if df['POSITION_T'].values[i] != 0
-    ])
-
     colors = cc.b_glasbey_category10
     for color, (track, g) in zip(colors, df.groupby('TRACK_ID')):
-        if 'CORRECTED DISPLACEMENT [um]' in df.columns:
-            g = g.dropna(subset=['CORRECTED DISPLACEMENT [um]'])
-            displacement = g['CORRECTED DISPLACEMENT [um]']
-        else:
-            g = g.dropna(subset=['DISPLACEMENT [um]'])
-            displacement = g['DISPLACEMENT [um]']
+        g = g.dropna(subset=[displacement_column])
+        displacement = g[displacement_column]
 
         time = g['FRAME'] * dt
 
@@ -430,3 +431,92 @@ def plot_displacement(filename: str, df: pd.DataFrame, comments: str, save_to_fi
     else:
         plt.savefig(save_to_filepath, dpi=300)
         plt.close()
+
+
+# Bootstrapping with optional weighting
+def weighted_bootstrap(data, func=np.mean, weights=None, n_resamples=1000, rng=None):
+    '''
+    Perform weighted bootstrapping on input data to estimate confidence intervals for a given statistic.
+
+    Parameters:
+    -----------
+    data : array-like
+        The data from which to draw bootstrap samples.
+    func : function, optional
+        A function to compute the statistic of interest (e.g., np.mean, np.median). Default is np.mean.
+    weights : array-like, optional
+        Weights for weighted resampling. If None, uniform weights are used. Must be the same length as data.
+    n_resamples : int, optional
+        Number of bootstrap resamples. Default is 1000.
+    rng : np.random.Generator, optional
+        A NumPy random number generator. If None, a new default generator is created.
+
+    Returns:
+    --------
+    ci : ndarray
+        The 95% confidence interval (2.5th and 97.5th percentiles) of the bootstrapped statistic.
+    '''
+
+    # Create a default random number generator if none is provided
+    rng = np.random.default_rng() if rng is None else rng
+
+    # If no weights are provided, use equal weights
+    if weights is None:
+        weights = np.ones(len(data))
+
+    # Generate bootstrap samples by randomly selecting elements with replacement,
+    # using the provided weights as sampling probabilities
+    bootstrap_samples = rng.choice(
+        data,
+        size=(n_resamples, len(data)),
+        replace=True,
+        p=weights / np.sum(weights),  # Normalize weights to sum to 1
+        axis=0
+    )
+
+    # Apply the statistic function to each resample along the axis of resampling
+    statistic = func(bootstrap_samples, axis=1)
+
+    # Compute the 95% confidence interval (2.5th and 97.5th percentiles)
+    ci = np.percentile(statistic, [2.5, 97.5], axis=0)
+
+    return np.mean(statistic, axis=0), ci
+
+
+def filter_data(df: pd.DataFrame()) -> pd.DataFrame():
+    r_sq_min = 0.5
+    # filter out the unreasonable tracks
+    df_filtered = df[
+        (df['R_SQUARED'] >= r_sq_min) &
+        (df['relax_too_much'] == False) &
+        (df['fit_divisible'] == True) &
+        (df['k_err']/df['k'] < 1) &
+        (df['eta_1_err']/df['eta_1'] < 1) &
+        (df['eta_2_err']/df['eta_2'] < 1)  
+    ]
+    return df_filtered
+
+
+def filter_data_model_independent(df: pd.DataFrame(), t_on, t_off) -> pd.DataFrame():
+    df['USEABLE'] = np.zeros(len(df))
+    for track in df['TRACK_ID'].unique():
+        df_track = df[df['TRACK_ID']==track]
+        df_track.
+        if len(df_track[df_track['MAGNET_STATUS'==1]]) == t_on and len(df_track[df_track['MAGNET_STATUS'==0]])==t_off:
+            
+
+    df_filtered = df[df['USEABLE']==1]
+    return df_filtered
+
+
+def plot_p_value(param:str, pair: set, df: pd.DataFrame, weights: set(np.ndarray, np.ndarray), custom_dict: dict, height_factor=1.2):
+    res = ttest_ind(df.loc[df['MT_STATUS']==pair[0], param].values, 
+                    df.loc[df['MT_STATUS']==pair[1], param].values, weights=weights, usevar='unequal')
+    print(f'P-value for {pair}: {res.pvalue}')
+    
+    pval = res.pvalue
+    
+    y_position = df[param].max() * height_factor
+    # print(y_position)
+    plt.hlines(y=y_position, xmin=pair[0], xmax=pair[1], color='black', linestyle='-', alpha=0.8, linewidth=1)
+    plt.text(x=(custom_dict[pair[0]]+custom_dict[pair[1]])/2, y=y_position, s=f'p = {pval:.2g}', ha='center', va='bottom', fontsize=10, color='black')

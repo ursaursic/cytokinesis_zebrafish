@@ -2,10 +2,14 @@ filepath_measurements_info: "/Volumes/cytokinesis-zebrafish-collab/magnetic_twee
 dir_parent: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_SD"
 
 recalculate: True
-subtract_background: True
+subtract_background: False
 
 save_to_server: True
 plot: True
+
+force_ranges: [[30, 60]]  # (pN) force ranges for averaging curves
+
+fit_type: 'full jeff' # other options: 'full jeff', 'full KV', 'creep jeff'
 
 pix_size: 0.54 # (um)
 dt: 0.5 # (s)

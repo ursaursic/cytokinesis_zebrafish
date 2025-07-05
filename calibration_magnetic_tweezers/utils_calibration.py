@@ -82,7 +82,8 @@ def filter_tracks(df: pd.DataFrame, tip_mask: np.ndarray, pixel_size: list) -> p
     filter = tip_mask[arr_positions[:, 1], arr_positions[:, 0]]==0
 
     df_filtered = df[filter]
-    df_filtered = df_filtered[df_filtered['DISTANCE [um]']>25]
+    df_filtered = df_filtered[df_filtered['DISTANCE [um]']>30]
+    df_filtered = df_filtered[df_filtered['POSITION_X']>200]
     return df_filtered
 
 

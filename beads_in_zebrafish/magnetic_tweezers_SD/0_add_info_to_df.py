@@ -101,9 +101,7 @@ def main(config_path):
         # Save the extended dataframe as an HDF5 file, including metadata
         with pd.HDFStore(filepath_extended_df, mode='w') as store:
             store.put('df', df)
-            store.get_storer('df').attrs.metadata = df.attrs['COMMENTS']
-        
-
+            store.get_storer('df').attrs.metadata = df.attrs['COMMENTS'] 
 
 
 if __name__ == "__main__":

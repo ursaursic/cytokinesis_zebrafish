@@ -1,0 +1,15 @@
+filepath_measurements_info: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_nocodazole/2_analysis/sd_tweezers_noco_info_1.csv"
+dir_parent: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_nocodazole"
+
+recalculate: True
+subtract_background: False
+
+save_to_server: True
+plot: True
+
+force_ranges: [[20, 60]]  # (pN) force ranges for averaging curves
+
+fit_type: 'full jeff' # other options: 'full jeff', 'full KV', 'creep jeff'
+
+pix_size: 0.649 # (um)
+dt: 0.5 # (s)

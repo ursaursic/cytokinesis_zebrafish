@@ -24,6 +24,8 @@ def main(config_path):
     dir_plots = os.path.join(config['dir_parent'], '3_plots')
     dir_analysis = os.path.join(config['dir_parent'], '2_analysis')
     dir_measurements_extended = os.path.join(dir_analysis, 'measurements_extended_info')
+    subtract_background = config['subtract_background'] 
+    subtr_bck_label = 'subtr_bck' if subtract_background else 'no_subtr_bck'
     
 
     # Iterate through all files in the 'measurements_extended_info' directory
@@ -41,9 +43,13 @@ def main(config_path):
         os.makedirs(os.path.join(dir_plots, 'trajectories'), exist_ok=True)
         os.makedirs(os.path.join(dir_plots, 'displacement'), exist_ok=True)
 
+        if "DO NOT USE" in comments:
+            print(f"Skipping {filename} due to 'DO NOT USE' comment.")
+            continue
+
         # Save plots as PNG files in the appropriate directories
-        plot_trajectories(filename, df, comments, save_to_filepath=os.path.join(dir_plots, 'trajectories', f'{filename}.png'), show_background_fit=True)
-        plot_displacement(filename, df, comments, save_to_filepath=os.path.join(dir_plots, 'displacement', f'{filename}.png'))
+        plot_trajectories(filename, df, comments, save_to_filepath=os.path.join(dir_plots, 'trajectories', f'{filename}_{subtr_bck_label}.png'), show_background_fit=subtract_background)
+        plot_displacement(filename, df, comments, save_to_filepath=os.path.join(dir_plots, 'displacement', f'{filename}_{subtr_bck_label}.png'), subtract_background=subtract_background, dt=config['dt'])
 
 
 if __name__ == "__main__":
