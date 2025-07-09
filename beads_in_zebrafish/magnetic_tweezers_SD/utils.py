@@ -12,7 +12,8 @@ from scipy.signal import find_peaks
 import colorcet as cc
 from typing import Callable
 import matplotlib.pyplot as plt
-from scipy.stats.weightstats import ttest_ind
+from statsmodels.stats.weightstats import ttest_ind
+from scipy.interpolate import make_smoothing_spline
 
 use_matplotlib = True
 
@@ -181,7 +182,7 @@ def calculate_model_independedt_params(pulse: pd.DataFrame, avg_force: float, su
     relaxing_phase = pulse.loc[pulse['MAGNET_STATUS']==0, displacement_column].values
     
     rising_dif = rising_phase[-1]-rising_phase[0]
-    relaxing_dif = relaxing_phase[-1]-relaxing_phase[0]
+    relaxing_dif = np.average(relaxing_phase[-5:-1])-relaxing_phase[0]
 
     rising_dif_norm = rising_dif/avg_force
     rising_dif_norm_inverse = 1/rising_dif_norm
@@ -483,13 +484,11 @@ def weighted_bootstrap(data, func=np.mean, weights=None, n_resamples=1000, rng=N
     return np.mean(statistic, axis=0), ci
 
 
-def filter_data(df: pd.DataFrame()) -> pd.DataFrame():
+def filter_data_params(df: pd.DataFrame()) -> pd.DataFrame():
     r_sq_min = 0.5
     # filter out the unreasonable tracks
     df_filtered = df[
-        (df['R_SQUARED'] >= r_sq_min) &
-        (df['relax_too_much'] == False) &
-        (df['fit_divisible'] == True) &
+        (df['R_SQUARED_fit'] >= r_sq_min) &
         (df['k_err']/df['k'] < 1) &
         (df['eta_1_err']/df['eta_1'] < 1) &
         (df['eta_2_err']/df['eta_2'] < 1)  
@@ -497,26 +496,54 @@ def filter_data(df: pd.DataFrame()) -> pd.DataFrame():
     return df_filtered
 
 
-def filter_data_model_independent(df: pd.DataFrame(), t_on, t_off) -> pd.DataFrame():
+def filter_data_model_independent(df: pd.DataFrame(), t_on, t_off, displacement_column) -> pd.DataFrame():
     df['USEABLE'] = np.zeros(len(df))
-    for track in df['TRACK_ID'].unique():
-        df_track = df[df['TRACK_ID']==track]
-        df_track.
-        if len(df_track[df_track['MAGNET_STATUS'==1]]) == t_on and len(df_track[df_track['MAGNET_STATUS'==0]])==t_off:
+    for track_id in df['TRACK_ID'].unique():
+        df_track = df[df['TRACK_ID']==track_id]
+        for pulse in df_track['PULSE_NUMBER'].unique():
+            df_pulse = df_track[df_track['PULSE_NUMBER']==pulse]
             
+            conditions = (len(df_pulse[df_pulse['MAGNET_STATUS']==1]) == t_on)&(len(df_pulse[df_pulse['MAGNET_STATUS']==0])==t_off)
 
-    df_filtered = df[df['USEABLE']==1]
+            if conditions:
+                df.loc[(df['TRACK_ID']==track_id)&(df['PULSE_NUMBER']==pulse), 'USEABLE'] = 1
+
+    df_filtered = df[df['USEABLE']==1].dropna(subset=displacement_column)
+    return df_filtered
+
+def filter_based_on_recovery(df: pd.DataFrame, mt_codes: [str, str]) -> pd. DataFrame:
+    # use data frame for each condition separately, otherwise it will be weird. 
+    df_filtered = pd.DataFrame()
+    for mt_status in mt_codes:
+
+        values = df.loc[df['MT_STATUS']==mt_status, 'relative_dif'].values
+        interval = 99
+        ci = np.percentile(values, [(100-interval)/2, 100-(100-interval)/2])
+        print(mt_status, ci)
+        conditions = (df['MT_STATUS']==mt_status)&(df['relative_dif']<=ci[1])&(df['relative_dif']>=ci[0])
+
+        df_filtered_mt = df[conditions]
+        df_filtered = pd.concat([df_filtered_mt, df_filtered], ignore_index=True)
     return df_filtered
 
 
-def plot_p_value(param:str, pair: set, df: pd.DataFrame, weights: set(np.ndarray, np.ndarray), custom_dict: dict, height_factor=1.2):
+def plot_p_value(param:str, pair: set, df: pd.DataFrame, weights: (np.ndarray, np.ndarray), custom_dict: dict, height_factor=1.2):
     res = ttest_ind(df.loc[df['MT_STATUS']==pair[0], param].values, 
-                    df.loc[df['MT_STATUS']==pair[1], param].values, weights=weights, usevar='unequal')
-    print(f'P-value for {pair}: {res.pvalue}')
+                    df.loc[df['MT_STATUS']==pair[1], param].values, weights=weights, alternative='two-sided', usevar='unequal')
+    print(f'P-value for {pair}: {res}')
     
-    pval = res.pvalue
+    pval = res[1]
     
     y_position = df[param].max() * height_factor
     # print(y_position)
     plt.hlines(y=y_position, xmin=pair[0], xmax=pair[1], color='black', linestyle='-', alpha=0.8, linewidth=1)
     plt.text(x=(custom_dict[pair[0]]+custom_dict[pair[1]])/2, y=y_position, s=f'p = {pval:.2g}', ha='center', va='bottom', fontsize=10, color='black')
+
+def get_r2_from_smooth_curves(time_on, time_off, displacement_on, displacement_off):
+    lam = 0.5
+    spl_on = make_smoothing_spline(time_on, displacement_on, lam=lam)
+    spl_off = make_smoothing_spline(time_off, displacement_off, lam=lam)
+    full_smooth = np.concatenate((spl_on(time_on), spl_off(time_off)))
+    full_data = np.concatenate((displacement_on, displacement_off))
+    r2 = r_squared(full_data, full_smooth)
+    return r2, full_smooth

@@ -1,13 +1,17 @@
-filepath_measurements_info: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_nocodazole/2_analysis/sd_tweezers_noco_info_1.csv"
+filepath_measurements_info: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_nocodazole/2_analysis/sd_tweezers_noco_info.csv"
 dir_parent: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_nocodazole"
 
 recalculate: True
-subtract_background: False
+subtract_background: True
 
 save_to_server: True
 plot: True
 
 force_ranges: [[20, 60]]  # (pN) force ranges for averaging curves
+
+mt_codes: ['taxol', 'noco']
+conditions: ['Taxol', 'Nocodazole']
+color_palette: 'dark'
 
 fit_type: 'full jeff' # other options: 'full jeff', 'full KV', 'creep jeff'
 

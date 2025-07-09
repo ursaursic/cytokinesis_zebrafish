@@ -10,9 +10,6 @@ from tqdm import tqdm
 import argparse
 import yaml
 import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy.signal import find_peaks
-import sys
 
 from utils import *
 
@@ -38,26 +35,28 @@ def main(config_path):
     dir_measurements_extended = dir_analysis+'/measurements_extended_info/'
 
     df_results = pd.DataFrame()
+    df_all_tracks = pd.DataFrame()
 
-    count_failed = 0
     for filename in tqdm(os.listdir(dir_measurements_extended)):
         df_all = pd.read_hdf(dir_measurements_extended+filename, key='df')
-        df_all = df.sort_values(by='POSITION_T')
+        df_all = df_all.sort_values(by='POSITION_T')
+
+        t_on, t_off = 10, 30
 
         # filter tracks
-        df = filter_data_model_independent(df_all)
+        df = filter_data_model_independent(df_all, t_on, t_off, displacement_column)
+        df['file'] = filename
+        df['EXPERIMENT'] = filename[:18].replace('_', '')
+        df['EMBRYO'] = filename[:15].replace('_', '')
+        
 
         for track_id in df['TRACK_ID'].unique():
             track = df[df['TRACK_ID']==track_id]
             for pulse_n in track['PULSE_NUMBER'].unique():
-
                 pulse = track[track['PULSE_NUMBER']==pulse_n]
+                
                 time_on = pulse.loc[pulse['MAGNET_STATUS']==1, 'FRAME'].values * dt
                 time_off = pulse.loc[pulse['MAGNET_STATUS']==0, 'FRAME'].values * dt
-
-                if len(time_on) < 4 or len(time_off) < 10:
-                    count_failed += 1
-                    continue
                 
                 # normalize time to start at 0
                 time_off -= time_on[0]
@@ -66,29 +65,22 @@ def main(config_path):
 
                 displacement_magnet_on = pulse.loc[pulse['MAGNET_STATUS']==1, displacement_column].values
                 displacement_magnet_off = pulse.loc[pulse['MAGNET_STATUS']==0, displacement_column].values
-
-                # check if too many data points go below zero during relaxation
-                relax_too_much = False
-                if sum(displacement_magnet_off < 0)/len(displacement_magnet_off) > 0.5:
-                    relax_too_much = True
                 displacement_full = np.concatenate((displacement_magnet_on, displacement_magnet_off))
-                if np.all(np.isnan(displacement_full)):
-                    count_failed += 1
-                    continue
 
                 avg_force = np.average(pulse.loc[pulse['MAGNET_STATUS']==1, 'FORCE [pN]'].values)
-
                 t_1 = time_on[-1]
+
+                df.loc[(df['TRACK_ID']==track_id)&(df['PULSE_NUMBER']==pulse_n), 'NORMALIZED_TIME'] = time_data
+                df.loc[(df['TRACK_ID']==track_id)&(df['PULSE_NUMBER']==pulse_n), 'AVG_FORCE'] = avg_force
                 
-                # Soemtimes the magnet was still on after the last frame 
-                if displacement_full[len(time_on)] > displacement_full[(len(time_on) - 1)]:
-                    t_1 = time_off[0]
+                r2, smooth_full = get_r2_from_smooth_curves(time_on, time_off, displacement_magnet_on, displacement_magnet_off)
                 
                 if plot:
                     fig = plt.figure(figsize=(10, 7))
                     plt.plot(time_data, displacement_full, 'k-', alpha = 0.5)
                     plt.plot(time_on, displacement_magnet_on, 'o', color ='green', alpha=0.5, label = 'magnet ON')
                     plt.plot(time_off, displacement_magnet_off, 'o', color='gray', alpha=0.5, label = 'magnet OFF')
+                    plt.plot(time_data, smooth_full, 'r-', alpha=0.5, label='smooth curve')
 
                 if config['fit_type'] == 'full jeff':
                     # weights for a better fit
@@ -100,42 +92,26 @@ def main(config_path):
 
                     params = calculate_Jeff_fit_params(time_data, displacement_full, avg_force, t_1, dt, sigma, plot=plot)
 
-                elif config['fit_type'] == 'full KV':
-                    sigma = np.ones_like(displacement_full)
-                    params_KV = calculate_KV_fit_params(time_data, displacement_full, avg_force, t_1, dt, sigma, plot=plot)
-                
-                elif config['fit_type'] == 'creep jeff':
-                    sigma = np.ones_like(displacement_magnet_on)
-                    params = calculate_Jeff_fit_params(time_on, displacement_magnet_on, avg_force, t_1, dt, sigma, plot=plot)
+                sigma = np.ones_like(displacement_full)
 
-                if config['fit_type'] != 'full KV':
-                    sigma = np.ones_like(displacement_full)
-                    params_KV = calculate_KV_fit_params(time_data, displacement_full, avg_force, t_1, dt, sigma, plot=False)
-
-                k, eta_1, eta_2, k_err, eta_1_err, eta_2_err, R_sq = params
-                k_KV, eta_KV, k_KV_err, eta_KV_err, R_sq_KV = params_KV
-
-                fit_divisible = check_differentiable(time_data, k, eta_1, eta_2, avg_force, t_1, dt)
+                k, eta_1, eta_2, k_err, eta_1_err, eta_2_err, r2_fit = params
 
                 if plot:
                     plt.xlabel('Time (s)')
                     plt.ylabel('Displacement (um)')
-                    plt.title(f'{filename.split("_")[0]} {filename.split("_")[1][0:9]}, track_ID: {track_id}, MT: {pulse["MT_STATUS"].values[0]}, force: {int(avg_force)} pN, relax_too_much: {relax_too_much}')
+                    plt.title(f'{filename.split("_")[0]} {filename.split("_")[1][0:9]}, track_ID: {track_id}, MT: {pulse["MT_STATUS"].values[0]}, force: {int(avg_force)} pN')
                     plt.legend()
                     plt.xlim(left=0)
                     plt.ylim(bottom=0)
-                    # plt.yscale('log')
-                    # plt.xscale('log')
-                    conditions = (R_sq >= 0.5) & (not relax_too_much) & (fit_divisible) & (k_err/k < 1) & (eta_1_err/eta_1 < 1) & (eta_2_err/eta_2 < 1)  
+  
                     if not os.path.exists(dir_plots + f'/all_fits/'):
                         os.makedirs(dir_plots + f'/all_fits/')
-                    if conditions:
+                    
+                    try:
                         plt.savefig(dir_plots + f'/all_fits/Jeff_fit_{filename.split("_")[0]}_{filename.split("_")[1][0:9]}_track_ID_{track_id}_pulse_n_{pulse_n}_{subtr_bck_label}.png', dpi=300)
-                    else: 
-                        plt.savefig(dir_plots + f'/all_fits/discarded/Jeff_fit_{filename.split("_")[0]}_{filename.split("_")[1][0:9]}_track_ID_{track_id}_pulse_n_{pulse_n}_{subtr_bck_label}.png', dpi=300)
-                    plt.close()
-
-                
+                        plt.close()
+                    except:
+                        print(f'error at {filename.split("_")[0]}_{filename.split("_")[1][0:9]}_track_ID_{track_id}_pulse_n_{pulse_n}')
                 
                 # include model independent analysis
                 rising_dif, relaxing_dif, rising_dif_norm, rising_dif_norm_inverse = calculate_model_independedt_params(pulse, avg_force, subtract_background=subtract_background)
@@ -153,15 +129,9 @@ def main(config_path):
                             'k_err': k_err, 
                             'eta_1_err': eta_1_err, 
                             'eta_2_err': eta_2_err,
-                            'k_KV': k_KV,
-                            'eta_KV': eta_KV,
-                            'k_KV_err': k_KV_err,
-                            'eta_KV_err': eta_KV_err,
                             't_1': t_1,
-                            'R_SQUARED': R_sq, 
-                            'R_SQUARED_KV': R_sq_KV,
-                            'fit_divisible': fit_divisible,
-                            'relax_too_much': relax_too_much,
+                            'R_SQUARED_smooth': r2, 
+                            'R_SQUARED_fit': r2_fit,
                             'rising_dif': [rising_dif], 
                             'relaxing_dif': [relaxing_dif], 
                             'rising_dif_norm': [rising_dif_norm], 
@@ -173,10 +143,11 @@ def main(config_path):
                             }
 
                 df_results = pd.concat([df_results, pd.DataFrame(new_line, index=[0])], ignore_index=True)
+        
+        df_all_tracks = pd.concat([df_all_tracks, df])
   
     df_results.to_csv(dir_plots + f'/results/results_material_properties_{subtr_bck_label}.csv')
-
-    print('Number of failed tracks:', count_failed)
+    df_all_tracks.to_csv(dir_plots + f'/results/all_full_tracks_{subtr_bck_label}.csv')
 
 
 if __name__ == '__main__':
