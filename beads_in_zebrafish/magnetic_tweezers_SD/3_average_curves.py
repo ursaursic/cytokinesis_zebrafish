@@ -68,7 +68,8 @@ def main(config_path):
         df_grouped_tracks_mean['COUNT'] = df_force_range.groupby(by=['EMBRYO', 'MT_STATUS', 'NORMALIZED_TIME']).count()['LABEL'].values
         df_grouped_tracks_mean.to_csv(f'{dir_plots}/results/averaged_curves_per_embryo/averaged_curves_{subtr_bck_label}{creep_only_label}.csv', index=False)
         
-        
+        count_e_i = 0
+        count_e_m = 0
         for embryo in df_force_range['EMBRYO'].unique():
             # group data by MT status
             df_embryo_filtered = df_force_range[df_force_range['EMBRYO']==embryo]
@@ -136,6 +137,10 @@ def main(config_path):
                             'a': 1 - 1 / ((popt[2] / (popt[0] * t_1)) * (1- np.exp(- popt[0]* t_1 / popt[1])) +1),
                             'elastic_viscous_ratio': (average_force_grouped / popt[0] * (1 - np.exp(- popt[0]  * t_1  / popt[1]))) / (average_force_grouped * t_1 / popt[2])
                             }
+                if mt_status == mt_codes[0]:
+                    count_e_i += 1
+                elif mt_status == mt_codes[1]:
+                    count_e_m += 1
 
                 df_results_from_averaged_tracks = pd.concat([df_results_from_averaged_tracks, pd.DataFrame(new_line, index=[0])], ignore_index=True)
 
@@ -157,9 +162,13 @@ def main(config_path):
             plt.title(f'Force range {force_range} pN')
             plt.legend()
             plt.tight_layout()
-            plt.savefig(f'{dir_plots}/results/averaged_curves_per_embryo/result_displacement_curve_averaged_{embryo}_{subtr_bck_label}{creep_only_label}.svg', format='svg')
+            if config['save_to_server']:
+                plt.savefig(f'{dir_plots}/results/averaged_curves_per_embryo/result_displacement_curve_averaged_{embryo}_{subtr_bck_label}{creep_only_label}.svg', format='svg')
+    
+    print(f'For force range {force_range} pN we have {count_e_i} interphase embryos and {count_e_m} mitotic embryos.')
 
-    df_results_from_averaged_tracks.to_csv(f'{dir_plots}/results/results_parameters_curve_averaged_force_range{force_range[0]}-{force_range[1]}pN_{subtr_bck_label}{creep_only_label}.csv', index=False)
+    if config['save_to_server']:
+        df_results_from_averaged_tracks.to_csv(f'{dir_plots}/results/results_parameters_curve_averaged_force_range{force_range[0]}-{force_range[1]}pN_{subtr_bck_label}{creep_only_label}.csv', index=False)
 
 
     # Alll averaged tracks
@@ -206,12 +215,15 @@ def main(config_path):
             yfit, popt, pcov = get_fit_jeff_full(x_fit, time_grouped, displacement_grouped,
                             np.average(df_grouped_mean.loc[(df_grouped_mean['MT_STATUS']==mt_status)&(df_grouped_mean['MAGNET_STATUS']==1), 'FORCE [pN]'].values), t_1, sigma=sigma)
             
-            plt.plot(x_fit, yfit, 'k-', linewidth=1, alpha=0.8, zorder=10)
+            # plt.plot(x_fit, yfit, 'k-', linewidth=1, alpha=0.8, zorder=10)
 
-            plt.text(1.05, 0.1 + 0.7*i, f'Interphase \n $k$ = {popt[0]:.2f} $\\pm$ {np.sqrt(pcov[0][0]):.2f} pN/$\\mathrm{{\\mu m}}$\n$\\gamma_1$ = {popt[1]:.2f} $\\pm$ {np.sqrt(pcov[1][1]):.2f}  pN s/$\\mathrm{{\\mu m}}$\n$\\gamma_2$ = {popt[2]:.2f} $\\pm$ {np.sqrt(pcov[2][2]):.2f}  pN s/$\\mathrm{{\\mu m}}$', transform=plt.gca().transAxes, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
+            # plt.text(1.05, 0.1 + 0.7*i, f'Interphase \n $k$ = {popt[0]:.2f} $\\pm$ {np.sqrt(pcov[0][0]):.2f} pN/$\\mathrm{{\\mu m}}$\n$\\gamma_1$ = {popt[1]:.2f} $\\pm$ {np.sqrt(pcov[1][1]):.2f}  pN s/$\\mathrm{{\\mu m}}$\n$\\gamma_2$ = {popt[2]:.2f} $\\pm$ {np.sqrt(pcov[2][2]):.2f}  pN s/$\\mathrm{{\\mu m}}$', transform=plt.gca().transAxes, fontsize=10, bbox=dict(facecolor='white', alpha=0.8))
 
 
             # plot all tracks 
+            count_i = 0
+            count_m = 0
+
             for file in df_data_filtered['file'].unique():
                 for track in df_data_filtered[df_data_filtered['file']==file]['TRACK_ID'].unique():
                     for pulse in df_data_filtered[(df_data_filtered['file']==file)&(df_data_filtered['TRACK_ID']==track)]['PULSE_NUMBER'].unique():
@@ -220,18 +232,23 @@ def main(config_path):
                         if len(df['MT_STATUS']) == 0:
                             continue
                         if df['MT_STATUS'].unique() == mt_codes[0]:
-                            plt.plot(df['NORMALIZED_TIME'], df[displacement_column], '-', color=color_palette[0], alpha=0.01)
+                            plt.plot(df['NORMALIZED_TIME'], df[displacement_column], '-', color=color_palette[0], alpha=0.03)
+                            count_i += 1
                         elif df['MT_STATUS'].unique() == mt_codes[1]:
-                            plt.plot(df['NORMALIZED_TIME'], df[displacement_column], '-', color=color_palette[1], alpha=0.01)
+                            plt.plot(df['NORMALIZED_TIME'], df[displacement_column], '-', color=color_palette[1], alpha=0.02)
+                            count_m += 1
+
+            print(f'For force range {force_range} pN we have {count_i} interphase and {count_m} mitotic tracks.')
 
             plt.xlabel('Time (s)')
             plt.ylabel('Displacement ($\\mathrm{\\mu}$m)')
             plt.title(f'Force range {force_range} pN')
-            plt.legend()
+            plt.legend(loc='upper right')
             plt.ylim(0, 12)
-            plt.xlim(left=0)
+            plt.xlim(0, 19.5)
             plt.tight_layout()
-            plt.savefig(f'{dir_plots}/results/result_displacement_curve_averaged_all_{subtr_bck_label}{creep_only_label}.svg', format='svg')
+            if config['save_to_server']:
+                plt.savefig(f'{dir_plots}/results/result_displacement_curve_averaged_all_{subtr_bck_label}{creep_only_label}.svg', format='svg')
 
 
 if __name__ == '__main__':

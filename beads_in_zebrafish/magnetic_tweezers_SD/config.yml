@@ -4,7 +4,7 @@ dir_parent: "/Volumes/cytokinesis-zebrafish-collab/magnetic_tweezers_SD"
 recalculate: True
 subtract_background: True
 
-save_to_server: True
+save_to_server: False
 plot: True
 
 force_ranges: [[20, 60]]  # (pN) force ranges for averaging curves
